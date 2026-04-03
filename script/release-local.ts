@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /**
  * Autonomous local release script for opencode-mux.
- * Builds all targets, generates checksums, creates GitHub release, and uploads artifacts.
+ * Builds current-platform binary, creates GitHub release, uploads artifacts.
  *
  * Usage:
  *   bun script/release-local.ts              # auto-detect version (preview)
@@ -54,6 +54,13 @@ async function sha256(file: string): Promise<string> {
   return out.split(" ")[0].trim()
 }
 
+// Map platform name to OS string used by build targets
+function buildOs(): string {
+  if (process.platform === "win32") return "windows"
+  if (process.platform === "darwin") return "darwin"
+  return "linux"
+}
+
 // ── Version Resolution ──────────────────────────────────────────────────────
 
 async function resolveVersion(): Promise<{ version: string; channel: string; preview: boolean }> {
@@ -66,7 +73,7 @@ async function resolveVersion(): Promise<{ version: string; channel: string; pre
     return { version: bumpInput!, channel, preview: channel !== "main" }
   }
 
-  // Get latest published version from npm
+  // Get latest published version from npm (fallback to local)
   let latestVersion: string
   try {
     const npmRes = await fetch("https://registry.npmjs.org/opencode-mux-ai/latest").then((r) => r.json())
@@ -96,13 +103,11 @@ async function resolveVersion(): Promise<{ version: string; channel: string; pre
 async function preflight() {
   log("Checking prerequisites")
 
-  // Check git status
   const status = await $`git status --porcelain`.text()
   if (status.trim()) {
     exit(`Working tree is dirty. Commit or stash changes first.\n${status}`)
   }
 
-  // Check gh auth
   try {
     const authCheck = await $`gh auth status`.nothrow()
     if (authCheck.exitCode !== 0) {
@@ -112,11 +117,48 @@ async function preflight() {
     exit("gh CLI not found. Install it from https://cli.github.com/")
   }
 
-  // Check bun
   const bunVer = await $`bun --version`.text().catch(() => "")
   if (!bunVer.trim()) exit("bun is required")
 
   log("Prerequisites OK")
+}
+
+// ── Discover artifact name for current platform ─────────────────────────────
+
+function findLocalArtifact(distDir: string): { name: string; file: string; dirName: string } | null {
+  const os = buildOs()
+  const arch = process.arch
+
+  // Try all possible variants for current platform
+  const variants = [
+    `opencode-mux-${os}-${arch}`,
+    `opencode-mux-${os}-${arch}-baseline`,
+    `opencode-mux-${os}-${arch}-musl`,
+    `opencode-mux-${os}-${arch}-baseline-musl`,
+  ]
+
+  for (const variant of variants) {
+    const dirPath = path.join(distDir, variant)
+    if (!fs.existsSync(dirPath)) continue
+
+    // Check for archive or binary
+    const ext = os === "linux" ? "tar.gz" : "zip"
+    const archiveName = `${variant}.${ext}`
+    const archivePath = path.join(distDir, archiveName)
+
+    if (fs.existsSync(archivePath)) {
+      return { name: archiveName, file: archivePath, dirName: variant }
+    }
+
+    // Check for binary
+    const binName = os === "windows" ? "opencode-mux.exe" : "opencode-mux"
+    const binPath = path.join(dirPath, "bin", binName)
+    if (fs.existsSync(binPath)) {
+      return { name: `${variant}-${ext}`, file: binPath, dirName: variant }
+    }
+  }
+
+  return null
 }
 
 // ── Main Pipeline ───────────────────────────────────────────────────────────
@@ -128,17 +170,17 @@ async function main() {
   log("Release plan", `v${version} channel=${channel} preview=${preview}`)
 
   // ── Step 1: Typecheck ────────────────────────────────────────────────────
-  log("Step 1/6", "Typecheck")
+  log("Step 1/5", "Typecheck")
   try {
     await $`bun turbo typecheck`
   } catch {
     exit("Typecheck failed")
   }
 
-  // ── Step 2: Build all targets ────────────────────────────────────────────
-  log("Step 2/6", `Build all targets (v${version})`)
+  // ── Step 2: Build current platform ───────────────────────────────────────
+  log("Step 2/5", `Build ${buildOs()}-${process.arch} (v${version})`)
   try {
-    await $`./packages/opencode/script/build.ts`
+    await $`./packages/opencode/script/build.ts --single`
       .env({
         ...process.env,
         OPENCODE_VERSION: version,
@@ -149,111 +191,82 @@ async function main() {
     exit("Build failed")
   }
 
-  // ── Step 3: Verify artifacts exist ───────────────────────────────────────
-  log("Step 3/6", "Verify artifacts")
+  // ── Step 3: Verify artifact & smoke test ─────────────────────────────────
+  log("Step 3/5", "Verify artifact")
   const distDir = path.join(root, "packages/opencode/dist")
-  const artifacts: { name: string; file: string }[] = []
+  const artifact = findLocalArtifact(distDir)
 
-  const expectedFiles = [
-    "opencode-mux-linux-arm64.tar.gz",
-    "opencode-mux-linux-x64.tar.gz",
-    "opencode-mux-linux-x64-baseline.tar.gz",
-    "opencode-mux-linux-arm64-musl.tar.gz",
-    "opencode-mux-linux-x64-musl.tar.gz",
-    "opencode-mux-linux-x64-baseline-musl.tar.gz",
-    "opencode-mux-darwin-arm64.zip",
-    "opencode-mux-darwin-x64.zip",
-    "opencode-mux-darwin-x64-baseline.zip",
-    "opencode-mux-windows-arm64.zip",
-    "opencode-mux-windows-x64.zip",
-    "opencode-mux-windows-x64-baseline.zip",
-  ]
-
-  for (const f of expectedFiles) {
-    const fp = path.join(distDir, f)
-    if (!fs.existsSync(fp)) {
-      console.warn(`  ⚠ Missing: ${f}`)
-      continue
-    }
-    const stat = fs.statSync(fp)
-    const sha = await sha256(fp)
-    artifacts.push({ name: f, file: fp })
-    console.log(`  ✓ ${f} (${(stat.size / 1024).toFixed(1)} KB, sha256:${sha.slice(0, 16)}...)`)
+  if (!artifact) {
+    exit(`No build artifact found for ${buildOs()}-${process.arch} in ${distDir}`)
   }
 
-  if (artifacts.length === 0) {
-    exit("No artifacts found")
-  }
+  log("Found artifact", `${artifact.name}`)
 
-  // ── Step 4: Smoke test current-platform binary ───────────────────────────
-  log("Step 4/6", "Smoke test")
-  const platform = process.platform
+  const binOs = buildOs()
   const arch = process.arch
-  const ext = platform === "win32" ? ".exe" : ""
-  const binaryName = `opencode-mux${ext}`
-  const binaryPath = path.join(distDir, `opencode-mux-${platform === "win32" ? "windows" : platform}-${arch}`, "bin", binaryName)
+  const binName = binOs === "windows" ? "opencode-mux.exe" : "opencode-mux"
+  const binPath = path.join(distDir, artifact.dirName, "bin", binName)
 
-  if (fs.existsSync(binaryPath)) {
-    const verOut = await $`${binaryPath} --version`.text()
+  if (fs.existsSync(binPath)) {
+    const verOut = await $`${binPath} --version`.text()
     log("Smoke test passed", verOut.trim())
   } else {
-    console.warn(`  ⚠ Binary not found at ${binaryPath}, skipping smoke test`)
+    exit(`Binary not found at ${binPath}`)
   }
 
-  // ── Step 5: Create GitHub Release ────────────────────────────────────────
-  log("Step 5/6", `Create GitHub release v${version}`)
+  // ── Step 4: Create GitHub Release ────────────────────────────────────────
+  log("Step 4/5", `Create GitHub release v${version}`)
 
   const tag = `v${version}`
+  const notesFile = path.join(root, "tmp-release-notes.md")
 
-  // Check if tag exists
-  const tagExists = await $`git ls-remote --tags origin ${tag}`.text().then((o) => o.trim().length > 0).catch(() => false)
+  let notes = `## opencode-mux v${version}\n\n`
+  if (!preview) {
+    notes += `Release channel: **${channel}**\n\n`
+    const sha = await sha256(artifact.file)
+    notes += `### Checksum (SHA256)\n\n\`\`\`\n${sha}  ${artifact.name}\n\`\`\`\n`
+  } else {
+    notes += `Preview build for \`${channel}\` branch.\n`
+    notes += `Platform: ${buildOs()}-${process.arch}\n`
+  }
+
+  await Bun.file(notesFile).write(notes)
+
+  const tagExists = await $`git ls-remote --tags origin ${tag}`
+    .text()
+    .then((o) => o.trim().length > 0)
+    .catch(() => false)
 
   if (!tagExists) {
-    // Create changelog body
-    let notes = `## opencode-mux v${version}\n\n`
-    if (!preview) {
-      notes += `Release channel: **${channel}**\n\n`
-      notes += `### Checksums (SHA256)\n\n\`\`\`\n`
-      for (const a of artifacts) {
-        const sha = await sha256(a.file)
-        notes += `${sha}  ${a.name}\n`
-      }
-      notes += `\`\`\`\n`
-    } else {
-      notes += `Preview build for \`${channel}\` branch.\n`
-    }
-
-    const notesFile = path.join(root, "dist", "release-notes.md")
-    await $`mkdir -p dist`
-    await Bun.file(notesFile).write(notes)
-
     try {
       await $`gh release create ${tag} --draft --title "v${version}" --notes-file ${notesFile} --repo ${GH_REPO}`
       log("Created draft release", tag)
     } catch (e: any) {
       const msg = e.message?.toString() ?? ""
-      if (msg.includes("already exists")) {
-        log("Release exists", `Using existing release ${tag}`)
-      } else {
+      if (!msg.includes("already exists")) {
         console.warn(`  Note: ${msg.trim()}`)
+      } else {
+        log("Release exists", `Using existing release ${tag}`)
       }
     }
   } else {
     log("Tag exists", `Using existing release ${tag}`)
   }
 
-  // ── Step 6: Upload artifacts ─────────────────────────────────────────────
-  log("Step 6/6", "Upload artifacts")
+  // ── Step 5: Upload artifact ──────────────────────────────────────────────
+  log("Step 5/5", "Upload artifact")
 
-  const artifactFiles = artifacts.map((a) => a.file)
-  if (artifactFiles.length > 0) {
-    try {
-      await $`gh release upload ${tag} ${artifactFiles} --clobber --repo ${GH_REPO}`
-      log("Uploaded", `${artifactFiles.length} artifacts to ${tag}`)
-    } catch (e: any) {
-      console.warn(`  Upload warning: ${e.message?.trim() ?? "unknown error"}`)
-    }
+  try {
+    await $`gh release upload ${tag} ${artifact.file} --clobber --repo ${GH_REPO}`
+    log("Uploaded", `${artifact.name} to ${tag}`)
+  } catch (e: any) {
+    console.warn(`  Upload warning: ${e.message?.trim() ?? "unknown error"}`)
   }
+
+  // Cleanup
+  try {
+    await $`rm -f ${notesFile}`
+  } catch {}
 
   // ── Summary ──────────────────────────────────────────────────────────────
   console.log(`
@@ -264,15 +277,15 @@ async function main() {
 ║  Tag:       ${tag.padEnd(48)}║
 ║  Channel:   ${channel.padEnd(48)}║
 ║  Preview:   ${String(preview).padEnd(48)}║
-║  Artifacts: ${String(artifacts.length).padEnd(48)}║
+║  Platform:  ${(buildOs() + "-" + process.arch).padEnd(48)}║
 ╠═══════════════════════════════════════════════════════════╣
 ║  View: https://github.com/${GH_REPO}/releases/tag/${tag}
 ║${" ".repeat(54)}║
 ╚═══════════════════════════════════════════════════════════╝
   `)
 
-  // ── Optional: Git tag and commit ─────────────────────────────────────────
-  if (!preview && !isExplicitVersion && bumpType) {
+  // ── Git tag ──────────────────────────────────────────────────────────────
+  if (!preview) {
     log("Git operations")
     try {
       await $`git tag ${tag}`.nothrow()
