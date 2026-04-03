@@ -196,6 +196,7 @@ async function main() {
   }
 
   // Package artifact ourselves if it wasn't done by build.ts
+  const distDir = path.join(root, "packages/opencode/dist")
   const osName = buildOs()
   const archName = process.arch
   const buildDir = path.join(distDir, `opencode-mux-${osName}-${archName}`)
@@ -222,7 +223,6 @@ async function main() {
 
   // ── Step 3: Verify artifact & smoke test ─────────────────────────────────
   log("Step 3/5", "Verify artifact")
-  const distDir = path.join(root, "packages/opencode/dist")
   const artifact = findLocalArtifact(distDir)
 
   if (!artifact) {
