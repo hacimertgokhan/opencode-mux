@@ -6,6 +6,7 @@ node_modules
 .idea
 .vscode
 .codex
+.qwen
 *~
 playground
 tmp
@@ -22,6 +23,7 @@ a.out
 target
 .scripts
 .direnv/
+packages/opencode/bin/
 
 # Local dev files
 opencode-dev
