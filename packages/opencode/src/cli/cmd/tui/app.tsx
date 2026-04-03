@@ -122,6 +122,7 @@ async function getTerminalBackgroundColor(): Promise<"dark" | "light"> {
 
 import type { EventSource } from "./context/sdk"
 import { DialogVariant } from "./component/dialog-variant"
+import { DialogMuxModels, DialogRouterManager, DialogRouterManagerKeys } from "./component/dialog-router-manager"
 
 function rendererConfig(_config: TuiConfig.Info): CliRendererConfig {
   return {
@@ -616,6 +617,72 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       onSelect: () => {
         local.agent.move(-1)
       },
+    },
+    {
+      title: "Mux Router",
+      value: "router.mux",
+      slash: {
+        name: "mux",
+      },
+      onSelect: () => {
+        dialog.replace(() => <DialogRouterManager />)
+      },
+      category: "Provider",
+    },
+    {
+      title: "Mux Status",
+      value: "router.mux.status",
+      slash: {
+        name: "mux-status",
+      },
+      onSelect: () => {
+        dialog.replace(() => <DialogRouterManager />)
+      },
+      category: "Provider",
+    },
+    {
+      title: "Mux Keys",
+      value: "router.mux.keys",
+      slash: {
+        name: "mux-keys",
+      },
+      onSelect: () => {
+        dialog.replace(() => <DialogRouterManagerKeys />)
+      },
+      category: "Provider",
+    },
+    {
+      title: "Mux Models",
+      value: "router.mux.models",
+      slash: {
+        name: "mux-models",
+      },
+      onSelect: () => {
+        dialog.replace(() => <DialogMuxModels />)
+      },
+      category: "Provider",
+    },
+    {
+      title: "Mux Switch",
+      value: "router.mux.switch",
+      slash: {
+        name: "mux-switch",
+      },
+      onSelect: () => {
+        dialog.replace(() => <DialogRouterManager />)
+      },
+      category: "Provider",
+    },
+    {
+      title: "Mux About",
+      value: "router.mux.about",
+      slash: {
+        name: "mux-about",
+      },
+      onSelect: () => {
+        dialog.replace(() => <DialogRouterManager />)
+      },
+      category: "Provider",
     },
     {
       title: "Connect provider",

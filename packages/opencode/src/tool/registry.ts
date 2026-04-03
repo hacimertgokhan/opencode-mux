@@ -12,6 +12,7 @@ import { WebFetchTool } from "./webfetch"
 import { WriteTool } from "./write"
 import { InvalidTool } from "./invalid"
 import { SkillTool } from "./skill"
+import { AikAuthorsTool, AikInfoTool, AikKeysTool, AikSwitchKeyTool } from "./router-manager"
 import type { Agent } from "../agent/agent"
 import { Tool } from "./tool"
 import { Config } from "../config/config"
@@ -131,6 +132,10 @@ export namespace ToolRegistry {
           WebSearchTool,
           CodeSearchTool,
           SkillTool,
+          AikInfoTool,
+          AikKeysTool,
+          AikSwitchKeyTool,
+          AikAuthorsTool,
           ApplyPatchTool,
           ...(Flag.OPENCODE_EXPERIMENTAL_LSP_TOOL ? [LspTool] : []),
           ...(cfg.experimental?.batch_tool === true ? [BatchTool] : []),
