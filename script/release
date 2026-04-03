@@ -1,5 +1,57 @@
 #!/usr/bin/env bash
+#
+# Release orchestrator for opencode-mux.
+#
+# Usage:
+#   ./script/release              # Local autonomous release (patch bump)
+#   ./script/release patch        # Local autonomous release (patch bump)
+#   ./script/release minor        # Local autonomous release (minor bump)
+#   ./script/release major        # Local autonomous release (major bump)
+#   ./script/release 1.4.0        # Local autonomous release (explicit version)
+#   ./script/release --ci         # Trigger GitHub workflow (CI-based release)
+#   ./script/release --ci patch   # Trigger GitHub workflow with bump
+#
+# Local mode:
+#   - Runs typecheck, builds all 12 targets locally
+#   - Generates SHA256 checksums
+#   - Creates draft GitHub release and uploads artifacts
+#   - Fully autonomous, no CI needed
+#
+# CI mode (--ci flag):
+#   - Triggers publish.yml GitHub workflow
+#   - CI handles build, signing, npm publish, Docker, AUR, Homebrew
+#
 
-BUMP_TYPE=${1:-patch}
+set -euo pipefail
 
-gh workflow run publish.yml -f bump="$BUMP_TYPE"
+BUMP_TYPE="${1:-patch}"
+
+if [[ "$1" == "--ci" ]]; then
+  BUMP_TYPE="${2:-patch}"
+  echo "[release] Triggering CI-based release via GitHub Actions..."
+  gh workflow run publish.yml -f bump="$BUMP_TYPE"
+  echo "[release] Workflow triggered. Monitor at: https://github.com/hacimertgokhan/opencode-mux/actions"
+else
+  echo "[release] Starting local autonomous release..."
+  echo "[release] Type: $BUMP_TYPE"
+
+  # Check prerequisites
+  if ! command -v bun &>/dev/null; then
+    echo "[release] ERROR: bun is required. Install from https://bun.sh/"
+    exit 1
+  fi
+
+  if ! command -v gh &>/dev/null; then
+    echo "[release] ERROR: gh CLI is required. Install from https://cli.github.com/"
+    exit 1
+  fi
+
+  gh auth status &>/dev/null || {
+    echo "[release] ERROR: gh CLI not authenticated. Run: gh auth login"
+    exit 1
+  }
+
+  # Run the local release script
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  bun "$SCRIPT_DIR/release-local.ts" "$BUMP_TYPE"
+fi
