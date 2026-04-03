@@ -74,13 +74,15 @@ async function resolveVersion(): Promise<{ version: string; channel: string; pre
   }
 
   // Get latest published version from npm (fallback to local)
-  let latestVersion: string
+  let latestVersion: string | null = null
   try {
-    const npmRes = await fetch("https://registry.npmjs.org/opencode-mux-ai/latest").then((r) => r.json())
-    latestVersion = npmRes.version
-  } catch {
-    latestVersion = currentVersion
-  }
+    const npmRes = await fetch("https://registry.npmjs.org/opencode-mux-ai/latest").then((r) => {
+      if (!r.ok) return null
+      return r.json()
+    })
+    if (npmRes?.version) latestVersion = npmRes.version
+  } catch {}
+  if (!latestVersion) latestVersion = currentVersion
 
   const [major, minor, patch] = latestVersion.split(".").map(Number)
   let newVersion: string
