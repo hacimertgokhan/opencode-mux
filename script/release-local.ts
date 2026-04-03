@@ -183,15 +183,41 @@ async function main() {
   log("Step 2/5", `Build ${buildOs()}-${process.arch} (v${version})`)
   const buildScript = path.join(root, "packages/opencode/script/build.ts")
   try {
+    // Don't set OPENCODE_RELEASE=1 - build.ts tries to use zip/tar which may not be available
+    // We'll package the artifact ourselves
     await $`bun run ${buildScript} --single`
       .env({
         ...process.env,
         OPENCODE_VERSION: version,
-        OPENCODE_RELEASE: preview ? "" : "1",
         GH_REPO,
       })
   } catch {
     exit("Build failed")
+  }
+
+  // Package artifact ourselves if it wasn't done by build.ts
+  const osName = buildOs()
+  const archName = process.arch
+  const buildDir = path.join(distDir, `opencode-mux-${osName}-${archName}`)
+
+  if (fs.existsSync(buildDir) && osName !== "linux") {
+    const zipName = `opencode-mux-${osName}-${archName}.zip`
+    const zipPath = path.join(distDir, zipName)
+    if (!fs.existsSync(zipPath)) {
+      log("Packaging", `${zipName}`)
+      if (process.platform === "win32") {
+        await $`powershell -Command "Compress-Archive -Path '${path.join(buildDir, "bin")}\\*' -DestinationPath '${zipPath}' -Force"`
+      } else {
+        await $`zip -r ${zipPath} *`.cwd(path.join(buildDir, "bin"))
+      }
+    }
+  } else if (fs.existsSync(buildDir) && osName === "linux") {
+    const tarName = `opencode-mux-${osName}-${archName}.tar.gz`
+    const tarPath = path.join(distDir, tarName)
+    if (!fs.existsSync(tarPath)) {
+      log("Packaging", `${tarName}`)
+      await $`tar -czf ${tarPath} *`.cwd(path.join(buildDir, "bin"))
+    }
   }
 
   // ── Step 3: Verify artifact & smoke test ─────────────────────────────────
