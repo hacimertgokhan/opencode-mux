@@ -36,6 +36,7 @@ import { Database } from "./storage/db"
 import { errorMessage } from "./util/error"
 import { PluginCommand } from "./cli/cmd/plug"
 import { Heap } from "./cli/heap"
+import { RouterManagerCommand } from "./cli/cmd/router"
 
 process.on("unhandledRejection", (e) => {
   Log.Default.error("rejection", {
@@ -63,7 +64,7 @@ function show(out: string) {
 
 const cli = yargs(args)
   .parserConfiguration({ "populate--": true })
-  .scriptName("opencode")
+  .scriptName("opencode-mux")
   .wrap(100)
   .help("help", "show help")
   .alias("help", "h")
@@ -101,6 +102,7 @@ const cli = yargs(args)
 
     process.env.AGENT = "1"
     process.env.OPENCODE = "1"
+    process.env.OPENCODE_MUX = "1"
     process.env.OPENCODE_PID = String(process.pid)
 
     Log.Default.info("opencode", {
@@ -170,6 +172,7 @@ const cli = yargs(args)
   .command(SessionCommand)
   .command(PluginCommand)
   .command(DbCommand)
+  .command(RouterManagerCommand)
   .fail((msg, err) => {
     if (
       msg?.startsWith("Unknown argument") ||

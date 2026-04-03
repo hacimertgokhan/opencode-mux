@@ -56,6 +56,7 @@ import { GoogleAuth } from "google-auth-library"
 import { ProviderTransform } from "./transform"
 import { Installation } from "../installation"
 import { ModelID, ProviderID } from "./schema"
+import { getActiveApiKey, retryOpenRouterWithKeyRotation } from "@/router-manager"
 
 export namespace Provider {
   const log = Log.create({ service: "provider" })
@@ -416,12 +417,14 @@ export namespace Provider {
       }
     },
     openrouter: async () => {
+      const activeKey = await getActiveApiKey()
       return {
-        autoload: false,
+        autoload: !!activeKey,
         options: {
+          ...(activeKey ? { apiKey: activeKey } : {}),
           headers: {
             "HTTP-Referer": "https://opencode.ai/",
-            "X-Title": "opencode",
+            "X-Title": "opencode-mux",
           },
         },
       }
@@ -1381,11 +1384,19 @@ export namespace Provider {
               }
             }
 
-            const res = await fetchFn(input, {
+            const requestInit = {
               ...opts,
               // @ts-ignore see here: https://github.com/oven-sh/bun/issues/16682
               timeout: false,
-            })
+            }
+
+            if (model.providerID === ProviderID.openrouter) {
+              const res = await retryOpenRouterWithKeyRotation(fetchFn, input, requestInit)
+              if (!chunkAbortCtl) return res
+              return wrapSSE(res, chunkTimeout, chunkAbortCtl)
+            }
+
+            const res = await fetchFn(input, requestInit)
 
             if (!chunkAbortCtl) return res
             return wrapSSE(res, chunkTimeout, chunkAbortCtl)

@@ -95,6 +95,17 @@ function init() {
         }
       })
     },
+    runSlash(name: string) {
+      for (const option of visibleOptions()) {
+        const slash = option.slash
+        if (!slash) continue
+        if (slash.name === name || slash.aliases?.includes(name)) {
+          option.onSelect?.(dialog)
+          return true
+        }
+      }
+      return false
+    },
     keybinds(enabled: boolean) {
       setSuspendCount((count) => count + (enabled ? -1 : 1))
     },

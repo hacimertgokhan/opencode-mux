@@ -1,5 +1,5 @@
 import { createStore } from "solid-js/store"
-import { batch, createEffect, createMemo } from "solid-js"
+import { batch, createEffect, createMemo, createSignal } from "solid-js"
 import { useSync } from "@tui/context/sync"
 import { useTheme } from "@tui/context/theme"
 import { uniqueBy } from "remeda"
@@ -13,6 +13,14 @@ import { useArgs } from "./args"
 import { useSDK } from "./sdk"
 import { RGBA } from "@opentui/core"
 import { Filesystem } from "@/util/filesystem"
+import {
+  getMuxConfig,
+  resolveMuxSelection,
+  setMuxEnabled,
+  toggleMuxEnabled,
+  toggleMuxSelectedModel,
+  type ModelCatalogEntry,
+} from "@/router-manager"
 
 export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
   name: "Local",
@@ -112,12 +120,23 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           modelID: string
         }[]
         variant: Record<string, string | undefined>
+        mux: {
+          enabled: boolean
+          selected: {
+            providerID: string
+            modelID: string
+          }[]
+        }
       }>({
         ready: false,
         model: {},
         recent: [],
         favorite: [],
         variant: {},
+        mux: {
+          enabled: false,
+          selected: [],
+        },
       })
 
       const filePath = path.join(Global.Path.state, "model.json")
@@ -138,7 +157,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         })
       }
 
-      Filesystem.readJson(filePath)
+        Filesystem.readJson(filePath)
         .then((x: any) => {
           if (Array.isArray(x.recent)) setModelStore("recent", x.recent)
           if (Array.isArray(x.favorite)) setModelStore("favorite", x.favorite)
@@ -149,6 +168,15 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           setModelStore("ready", true)
           if (state.pending) save()
         })
+
+      getMuxConfig()
+        .then((mux) => {
+          batch(() => {
+            setModelStore("mux", "enabled", mux.enabled)
+            setModelStore("mux", "selected", mux.selectedModels)
+          })
+        })
+        .catch(() => {})
 
       const args = useArgs()
       const fallbackModel = createMemo(() => {
@@ -201,8 +229,50 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         )
       })
 
+      const openrouterCatalog = createMemo<ModelCatalogEntry[]>(() => {
+        const provider = sync.data.provider.find((item) => item.id === "openrouter")
+        if (!provider) return []
+        return Object.values(provider.models).map((model) => ({
+          providerID: provider.id,
+          modelID: model.id,
+          name: model.name ?? model.id,
+          cost: {
+            input: model.cost?.input,
+            output: model.cost?.output,
+          },
+        }))
+      })
+
+      // Mux-aware resolved model: auto-resolves best model when mux is enabled
+      const [resolvedModel, setResolvedModel] = createSignal<ReturnType<typeof currentModel>>(undefined)
+      let lastResolved: ReturnType<typeof currentModel> = undefined
+
+      createEffect(() => {
+        const base = currentModel()
+        if (!base) {
+          setResolvedModel(undefined)
+          return
+        }
+        if (!modelStore.mux.enabled || base.providerID !== "openrouter") {
+          setResolvedModel(base)
+          return
+        }
+        const muxLen = modelStore.mux.selected.length
+        if (lastResolved && lastResolved.modelID === base.modelID) return
+        resolveMuxSelection(base, openrouterCatalog())
+          .then((result) => {
+            if (result?.model) {
+              lastResolved = result.model
+              setResolvedModel(result.model)
+            }
+          })
+          .catch(() => {})
+      })
+
+      const effectiveModel = createMemo(() => resolvedModel() ?? currentModel())
+
       return {
-        current: currentModel,
+        current: effectiveModel,
         get ready() {
           return modelStore.ready
         },
@@ -362,6 +432,34 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
               return
             }
             this.set(variants[index + 1])
+          },
+        },
+        mux: {
+          enabled() {
+            return modelStore.mux.enabled
+          },
+          selected() {
+            return modelStore.mux.selected
+          },
+          catalog() {
+            return openrouterCatalog()
+          },
+          async setEnabled(enabled: boolean) {
+            const mux = await setMuxEnabled(enabled)
+            setModelStore("mux", "enabled", mux.enabled)
+          },
+          async toggleEnabled() {
+            const mux = await toggleMuxEnabled()
+            setModelStore("mux", "enabled", mux.enabled)
+            return mux.enabled
+          },
+          async toggleModel(model: { providerID: string; modelID: string }) {
+            const mux = await toggleMuxSelectedModel(model)
+            setModelStore("mux", "selected", mux.selectedModels)
+            return mux.selectedModels
+          },
+          async resolve(model: { providerID: string; modelID: string }) {
+            return resolveMuxSelection(model, openrouterCatalog())
           },
         },
       }
