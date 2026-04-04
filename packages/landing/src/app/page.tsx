@@ -204,17 +204,13 @@ export default function Home() {
   }, [])
 
   const copy = () => {
-    navigator.clipboard.writeText(
-      "curl -fsSL https://raw.githubusercontent.com/hacimertgokhan/opencode-mux/main/install | bash",
-    )
+    navigator.clipboard.writeText("curl -fsSL https://raw.githubusercontent.com/hacimertgokhan/mux/main/install | bash")
     setDone(true)
     setTimeout(() => setDone(false), 1800)
   }
 
   const copyPs = () => {
-    navigator.clipboard.writeText(
-      "irm https://raw.githubusercontent.com/hacimertgokhan/opencode-mux/main/install-mux.ps1 | iex",
-    )
+    navigator.clipboard.writeText("irm https://raw.githubusercontent.com/hacimertgokhan/mux/main/install-mux.ps1 | iex")
     setDonePs(true)
     setTimeout(() => setDonePs(false), 1800)
   }
@@ -247,7 +243,7 @@ export default function Home() {
               <a href="#playground">Playground</a>
               <a href="#routing">Routing</a>
               <a href="#features">Features</a>
-              <a href="https://github.com/hacimertgokhan/opencode-mux" className="link-btn">
+              <a href="https://github.com/hacimertgokhan/mux" className="link-btn">
                 GitHub
               </a>
             </nav>
@@ -264,7 +260,7 @@ export default function Home() {
             <a href="#playground" className="btn btn-solid">
               Live demo
             </a>
-            <a href="https://github.com/hacimertgokhan/opencode-mux" className="btn btn-line">
+            <a href="https://github.com/hacimertgokhan/mux" className="btn btn-line">
               GitHub
             </a>
           </div>
@@ -431,7 +427,7 @@ export default function Home() {
               <a href="#playground" className="btn btn-solid">
                 Get started
               </a>
-              <a href="https://github.com/hacimertgokhan/opencode-mux" className="btn btn-line">
+              <a href="https://github.com/hacimertgokhan/mux" className="btn btn-line">
                 GitHub
               </a>
             </div>
@@ -442,7 +438,7 @@ export default function Home() {
       <footer className="foot">
         <span>Built by hacimertgokhan</span>
         <div>
-          <a href="https://github.com/hacimertgokhan/opencode-mux">GitHub</a>
+          <a href="https://github.com/hacimertgokhan/mux">GitHub</a>
           <a href="https://discord.gg/opencode">Discord</a>
           <a href="https://x.com/opencode">X</a>
         </div>
