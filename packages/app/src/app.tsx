@@ -42,14 +42,22 @@ import { ServerConnection, ServerProvider, serverName, useServer } from "@/conte
 import { SettingsProvider } from "@/context/settings"
 import { TerminalProvider } from "@/context/terminal"
 import DirectoryLayout from "@/pages/directory-layout"
+import HomeRoute from "@/pages/home"
 import Layout from "@/pages/layout"
 import { ErrorPage } from "./pages/error"
+import { DialogSelectServer } from "@/components/dialog-select-server"
 import { useCheckServerHealth } from "./utils/server-health"
+import { Button } from "@opencode-ai/ui/button"
+import { useDialog } from "@opencode-ai/ui/context/dialog"
 
-const HomeRoute = lazy(() => import("@/pages/home"))
+const Mobile = lazy(() => import("@/pages/mobile"))
 const loadSession = () => import("@/pages/session")
 const Session = lazy(loadSession)
-const Loading = () => <div class="size-full" />
+const Loading = () => (
+  <div class="h-dvh w-screen flex items-center justify-center bg-background-base">
+    <Splash class="w-16 h-20 opacity-50 animate-pulse" />
+  </div>
+)
 
 if (typeof location === "object" && /\/session(?:\/|$)/.test(location.pathname)) {
   void loadSession()
@@ -62,6 +70,7 @@ const SessionRoute = () => (
 )
 
 const SessionIndexRoute = () => <Navigate href="session" />
+const MobileRoute = () => <Mobile />
 
 function UiI18nBridge(props: ParentProps) {
   const language = useLanguage()
@@ -94,9 +103,7 @@ function AppShellProviders(props: ParentProps) {
           <NotificationProvider>
             <ModelsProvider>
               <CommandProvider>
-                <HighlightsProvider>
-                  <Layout>{props.children}</Layout>
-                </HighlightsProvider>
+                <HighlightsProvider>{props.children}</HighlightsProvider>
               </CommandProvider>
             </ModelsProvider>
           </NotificationProvider>
@@ -167,26 +174,35 @@ function ConnectionGate(props: ParentProps<{ disableHealthCheck?: boolean }>) {
 
   const [checkMode, setCheckMode] = createSignal<"blocking" | "background">("blocking")
 
-  // performs repeated health check with a grace period for
-  // non-http connections, otherwise fails instantly
-  const [startupHealthCheck, healthCheckActions] = createResource(() =>
-    props.disableHealthCheck
-      ? true
-      : Effect.gen(function* () {
-          if (!server.current) return true
-          const { http, type } = server.current
+  const hasServer = createMemo(() => {
+    const key = server.key
+    if (!key) return false
+    const cur = server.current
+    if (!cur) return false
+    if (ServerConnection.key(cur) !== key) return false
+    return cur.http.url.length > 0
+  })
 
-          while (true) {
-            const res = yield* Effect.promise(() => checkServerHealth(http))
-            if (res.healthy) return true
-            if (checkMode() === "background" || type === "http") return false
-          }
-        }).pipe(
-          effectMinDuration(checkMode() === "blocking" ? "1.2 seconds" : 0),
-          Effect.timeoutOrElse({ duration: "10 seconds", orElse: () => Effect.succeed(false) }),
-          Effect.ensuring(Effect.sync(() => setCheckMode("background"))),
-          Effect.runPromise,
-        ),
+  const [startupHealthCheck, healthCheckActions] = createResource(
+    () => ({ has: hasServer(), disabled: props.disableHealthCheck }),
+    (src) => {
+      if (!src.has || src.disabled) return Promise.resolve(false)
+      return Effect.gen(function* () {
+        if (!server.current) return false
+        const { http, type } = server.current
+
+        while (true) {
+          const res = yield* Effect.promise(() => checkServerHealth(http))
+          if (res.healthy) return true
+          if (checkMode() === "background" || type === "http") return false
+        }
+      }).pipe(
+        effectMinDuration(checkMode() === "blocking" ? "1.2 seconds" : 0),
+        Effect.timeoutOrElse({ duration: "10 seconds", orElse: () => Effect.succeed(false) }),
+        Effect.ensuring(Effect.sync(() => setCheckMode("background"))),
+        Effect.runPromise,
+      )
+    },
   )
 
   return (
@@ -221,11 +237,11 @@ function ConnectionGate(props: ParentProps<{ disableHealthCheck?: boolean }>) {
 
 function ConnectionError(props: { onRetry?: () => void; onServerSelected?: (key: ServerConnection.Key) => void }) {
   const language = useLanguage()
+  const dialog = useDialog()
   const server = useServer()
   const others = () => server.list.filter((s) => ServerConnection.key(s) !== server.key)
   const name = createMemo(() => server.name || server.key)
-  const serverToken = "\u0000server\u0000"
-  const unreachable = createMemo(() => language.t("app.server.unreachable", { server: serverToken }).split(serverToken))
+  const noServer = createMemo(() => !server.current || !server.current.http.url)
 
   const timer = setInterval(() => props.onRetry?.(), 1000)
   onCleanup(() => clearInterval(timer))
@@ -234,15 +250,24 @@ function ConnectionError(props: { onRetry?: () => void; onServerSelected?: (key:
     <div class="h-dvh w-screen flex flex-col items-center justify-center bg-background-base gap-6 p-6">
       <div class="flex flex-col items-center max-w-md text-center">
         <Splash class="w-12 h-15 mb-4" />
-        <p class="text-14-regular text-text-base">
-          {unreachable()[0]}
-          <span class="text-text-strong font-medium">{name()}</span>
-          {unreachable()[1]}
-        </p>
-        <p class="mt-1 text-12-regular text-text-weak">{language.t("app.server.retrying")}</p>
+        <Show
+          when={noServer()}
+          fallback={
+            <>
+              <p class="text-14-regular text-text-base">{language.t("app.server.unreachable", { server: name() })}</p>
+              <p class="mt-1 text-12-regular text-text-weak">{language.t("app.server.retrying")}</p>
+            </>
+          }
+        >
+          <p class="text-14-regular text-text-base">{language.t("app.server.noServer")}</p>
+          <p class="mt-1 text-12-regular text-text-weak">{language.t("app.server.noServerHint")}</p>
+        </Show>
       </div>
-      <Show when={others().length > 0}>
-        <div class="flex flex-col gap-2 w-full max-w-sm">
+      <div class="flex flex-col gap-2 w-full max-w-sm">
+        <Button variant="primary" size="large" class="w-full" onClick={() => dialog.show(() => <DialogSelectServer />)}>
+          {language.t("dialog.server.add.button")}
+        </Button>
+        <Show when={others().length > 0}>
           <span class="text-12-regular text-text-base text-center">{language.t("app.server.otherServers")}</span>
           <div class="flex flex-col gap-1 bg-surface-base rounded-lg p-2">
             <For each={others()}>
@@ -260,8 +285,8 @@ function ConnectionError(props: { onRetry?: () => void; onServerSelected?: (key:
               }}
             </For>
           </div>
-        </div>
-      </Show>
+        </Show>
+      </div>
     </div>
   )
 }
@@ -296,10 +321,14 @@ export function AppInterface(props: {
                 component={props.router ?? Router}
                 root={(routerProps) => <RouterRoot appChildren={props.children}>{routerProps.children}</RouterRoot>}
               >
-                <Route path="/" component={HomeRoute} />
-                <Route path="/:dir" component={DirectoryLayout}>
-                  <Route path="/" component={SessionIndexRoute} />
-                  <Route path="/session/:id?" component={SessionRoute} />
+                <Route path="/" component={Layout}>
+                  <Route path="/" component={HomeRoute} />
+                  <Route path="/index.html" component={HomeRoute} />
+                  <Route path="/mobile" component={MobileRoute} />
+                  <Route path="/:dir" component={DirectoryLayout}>
+                    <Route path="/" component={SessionIndexRoute} />
+                    <Route path="/session/:id?" component={SessionRoute} />
+                  </Route>
                 </Route>
               </Dynamic>
             </GlobalSyncProvider>

@@ -227,6 +227,56 @@ function providerCfg(url: string) {
   }
 }
 
+const localRef = {
+  providerID: ProviderID.make("lmstudio"),
+  modelID: ModelID.make("test-model"),
+}
+
+const localCfg = {
+  provider: {
+    lmstudio: {
+      name: "LM Studio",
+      id: "lmstudio",
+      env: [],
+      npm: "@ai-sdk/openai-compatible",
+      models: {
+        "test-model": {
+          id: "test-model",
+          name: "Test Model",
+          attachment: false,
+          reasoning: false,
+          temperature: false,
+          tool_call: true,
+          release_date: "2025-01-01",
+          limit: { context: 100000, output: 10000 },
+          cost: { input: 0, output: 0 },
+          options: {},
+        },
+      },
+      options: {
+        apiKey: "test-key",
+        baseURL: "http://localhost:1/v1",
+      },
+    },
+  },
+}
+
+function localProviderCfg(url: string) {
+  return {
+    ...localCfg,
+    provider: {
+      ...localCfg.provider,
+      lmstudio: {
+        ...localCfg.provider.lmstudio,
+        options: {
+          ...localCfg.provider.lmstudio.options,
+          baseURL: url,
+        },
+      },
+    },
+  }
+}
+
 const user = Effect.fn("test.user")(function* (sessionID: SessionID, text: string) {
   const session = yield* Session.Service
   const msg = yield* session.updateMessage({
@@ -479,6 +529,47 @@ it.live("loop continues when finish is stop but assistant has tool parts", () =>
       }
     }),
     { git: true, config: providerCfg },
+  ),
+)
+
+it.live("local fallback replays text tool calls", () =>
+  provideTmpdirServer(
+    Effect.fnUntraced(function* ({ llm }) {
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      const session = yield* sessions.create({
+        title: "Local fallback",
+        permission: [{ permission: "*", pattern: "*", action: "allow" }],
+      })
+      yield* prompt.prompt({
+        sessionID: session.id,
+        agent: "build",
+        noReply: true,
+        model: localRef,
+        parts: [{ type: "text", text: "pwd yaz" }],
+      })
+      yield* llm.text('(bash, "pwd")')
+      yield* llm.text("done")
+
+      const result = yield* prompt.loop({ sessionID: session.id })
+      expect(yield* llm.calls).toBe(2)
+      expect(result.info.role).toBe("assistant")
+      if (result.info.role === "assistant") {
+        expect(result.parts.some((part) => part.type === "text" && part.text === "done")).toBe(true)
+      }
+
+      const msgs = yield* MessageV2.filterCompactedEffect(session.id)
+      const withTool = msgs.find(
+        (item) => item.info.role === "assistant" && item.parts.some((part) => part.type === "tool"),
+      )
+      expect(withTool?.info.role).toBe("assistant")
+      if (!withTool || withTool.info.role !== "assistant") return
+
+      const part = withTool.parts.find((item): item is MessageV2.ToolPart => item.type === "tool")
+      expect(part?.tool).toBe("bash")
+      expect(part?.state.status).toBe("completed")
+    }),
+    { git: true, config: localProviderCfg },
   ),
 )
 

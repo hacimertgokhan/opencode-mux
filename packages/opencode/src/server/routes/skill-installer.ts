@@ -4,6 +4,19 @@ import z from "zod"
 import { lazy } from "@/util/lazy"
 import * as Installer from "../../skill/installer"
 
+function repo(input: string) {
+  const text = input.trim()
+  if (!text) return
+  const hit = text.match(/github\.com\/([^/]+)\/([^/]+)/i)
+  if (hit) {
+    return { owner: hit[1], repo: hit[2].replace(/\.git$/i, "") }
+  }
+  const parts = text.replace(/^https?:\/\//i, "").split("/")
+  if (parts.length >= 2 && !parts[0].includes(".")) {
+    return { owner: parts[0], repo: parts[1].replace(/\.git$/i, "") }
+  }
+}
+
 export const SkillInstallerRoutes = lazy(() =>
   new Hono()
     .get(
@@ -118,8 +131,18 @@ export const SkillInstallerRoutes = lazy(() =>
         },
       }),
       async (c) => {
-        const body = await c.req.json<{ owner: string; repo: string }>()
-        const result = await Installer.install(body.owner, body.repo)
+        const body = await c.req.json<{
+          owner?: string
+          repo?: string
+          url?: string
+          scope?: Installer.InstallScope
+        }>()
+        const pair =
+          body.owner && body.repo ? { owner: body.owner, repo: body.repo } : body.url ? repo(body.url) : undefined
+        if (!pair) {
+          return c.json({ installed: [], url: "" })
+        }
+        const result = await Installer.install(pair.owner, pair.repo, { scope: body.scope })
         return c.json(result)
       },
     )

@@ -13,6 +13,23 @@ export function DialogStatus() {
   const dialog = useDialog()
 
   const enabledFormatters = createMemo(() => sync.data.formatter.filter((f) => f.enabled))
+  const skills = createMemo(() => {
+    const total = sync.data.command.filter((item) => item.source === "skill").length
+    return {
+      total,
+      loaded: total,
+    }
+  })
+  const mcp = createMemo(() => {
+    const list = Object.values(sync.data.mcp)
+    return {
+      total: list.length,
+      connected: list.filter((item) => item.status === "connected").length,
+      failed: list.filter((item) => item.status === "failed").length,
+      auth: list.filter((item) => item.status === "needs_auth" || item.status === "needs_client_registration").length,
+      disabled: list.filter((item) => item.status === "disabled").length,
+    }
+  })
 
   const plugins = createMemo(() => {
     const list = sync.data.config.plugin ?? []
@@ -53,6 +70,9 @@ export function DialogStatus() {
       <Show when={Object.keys(sync.data.mcp).length > 0} fallback={<text fg={theme.text}>No MCP Servers</text>}>
         <box>
           <text fg={theme.text}>{Object.keys(sync.data.mcp).length} MCP Servers</text>
+          <text fg={theme.textMuted}>
+            connected {mcp().connected} · failed {mcp().failed} · auth {mcp().auth} · disabled {mcp().disabled}
+          </text>
           <For each={Object.entries(sync.data.mcp)}>
             {([key, item]) => (
               <box flexDirection="row" gap={1}>
@@ -91,6 +111,12 @@ export function DialogStatus() {
               </box>
             )}
           </For>
+        </box>
+      </Show>
+      <Show when={skills().total > 0} fallback={<text fg={theme.text}>No Skills</text>}>
+        <box>
+          <text fg={theme.text}>{skills().total} Skills</text>
+          <text fg={theme.textMuted}>loaded {skills().loaded}</text>
         </box>
       </Show>
       {sync.data.lsp.length > 0 && (

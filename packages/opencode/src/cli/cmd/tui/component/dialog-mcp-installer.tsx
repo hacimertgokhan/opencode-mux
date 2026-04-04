@@ -182,7 +182,54 @@ export function DialogMcpInstaller() {
     })
   })
 
+  async function scope() {
+    const value = await DialogPrompt.show(dialog, "Install Scope", {
+      placeholder: "project | mux",
+      value: "project",
+    })
+    if (!value) return
+    const text = value.trim().toLowerCase()
+    if (text === "project" || text === "local") return "project" as const
+    if (text === "mux" || text === "global") return "global" as const
+    await DialogAlert.show(dialog, "Invalid Scope", "Use 'project' or 'mux'.")
+  }
+
+  function env(input?: string) {
+    if (!input) return undefined
+    const out: Record<string, string> = {}
+    for (const line of input.split("\n")) {
+      const idx = line.indexOf("=")
+      if (idx <= 0) continue
+      out[line.slice(0, idx).trim()] = line.slice(idx + 1).trim()
+    }
+    return Object.keys(out).length ? out : undefined
+  }
+
+  async function save(where: "project" | "global", apply: (cfg: any) => any) {
+    if (where === "project") {
+      const cfg = (await sdk.client.config.get()).data
+      if (!cfg) throw new Error("Failed to load project config")
+      await sdk.client.config.update(apply(cfg))
+      return
+    }
+
+    const base = sdk.url.replace(/\/$/, "")
+    const res = await fetch(`${base}/config/global`)
+    if (!res.ok) throw new Error("Failed to load global config")
+    const cfg = await res.json()
+    const next = apply(cfg)
+    const out = await fetch(`${base}/config/global`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(next),
+    })
+    if (!out.ok) throw new Error("Failed to update global config")
+  }
+
   async function handleInstall(entry: typeof MCP_REGISTRY[number]) {
+    const where = await scope()
+    if (!where) return
+
     const configData = cfg()
     const existingMcp = (configData as any)?.mcp ?? {}
 
@@ -197,16 +244,7 @@ export function DialogMcpInstaller() {
       const envPrompt = await DialogPrompt.show(dialog, `Environment Variables for ${entry.name}`, {
         placeholder: envKeys.map((k) => `${k}=`).join("\n"),
       })
-      if (envPrompt) {
-        envVars = {}
-        for (const line of envPrompt.split("\n")) {
-          const eqIdx = line.indexOf("=")
-          if (eqIdx > 0) {
-            envVars[line.slice(0, eqIdx).trim()] = line.slice(eqIdx + 1).trim()
-          }
-        }
-        if (Object.keys(envVars).length === 0) envVars = undefined
-      }
+      envVars = env(envPrompt ?? undefined)
     }
 
     const confirmed = await DialogConfirm.show(
@@ -223,22 +261,94 @@ export function DialogMcpInstaller() {
       : { type: "remote", url: entry.url }
 
     try {
-      const newMcp = { ...existingMcp, [entry.name]: mcpConfig }
-      await sdk.client.config.update({ ...configData, mcp: newMcp } as any)
+      await save(where, (cfg: any) => ({
+        ...cfg,
+        mcp: { ...(cfg?.mcp ?? {}), [entry.name]: mcpConfig },
+      }))
       // Refresh MCP status
       const status = await sdk.client.mcp.status()
       if (status.data) sync.set("mcp", status.data)
-      await DialogAlert.show(dialog, "Installed ✓", `${entry.name} MCP server has been added.`)
+      await DialogAlert.show(dialog, "Installed ✓", `${entry.name} MCP server has been added (${where}).`)
     } catch (e: any) {
       await DialogAlert.show(dialog, "Install Failed", e.message ?? String(e))
     }
   }
 
+  async function handleCreate() {
+    const where = await scope()
+    if (!where) return
+
+    const name = await DialogPrompt.show(dialog, "MCP Name", { placeholder: "my-mcp" })
+    if (!name?.trim()) return
+
+    const type = await DialogPrompt.show(dialog, "MCP Type", { placeholder: "local | remote", value: "local" })
+    if (!type) return
+
+    const mode = type.trim().toLowerCase()
+    if (mode !== "local" && mode !== "remote") {
+      await DialogAlert.show(dialog, "Invalid Type", "Use 'local' or 'remote'.")
+      return
+    }
+
+    const target = await DialogPrompt.show(
+      dialog,
+      mode === "local" ? "Command" : "URL",
+      mode === "local" ? { placeholder: "npx -y my-mcp-server" } : { placeholder: "https://example.com/mcp" },
+    )
+    if (!target?.trim()) return
+
+    const envPrompt = await DialogPrompt.show(dialog, "Environment (optional)", {
+      placeholder: "KEY=value",
+    })
+    const environment = env(envPrompt ?? undefined)
+    const list = mode === "local" ? target.trim().split(/\s+/).filter(Boolean) : []
+
+    const mcp =
+      mode === "local"
+        ? {
+            type: "local" as const,
+            command: list,
+            ...(environment ? { environment } : {}),
+          }
+        : {
+            type: "remote" as const,
+            url: target.trim(),
+          }
+
+    if (mode === "local" && list.length === 0) {
+      await DialogAlert.show(dialog, "Invalid Command", "Provide a valid local command.")
+      return
+    }
+
+    try {
+      await save(where, (cfg: any) => ({
+        ...cfg,
+        mcp: { ...(cfg?.mcp ?? {}), [name.trim()]: mcp },
+      }))
+      const status = await sdk.client.mcp.status()
+      if (status.data) sync.set("mcp", status.data)
+      await DialogAlert.show(dialog, "MCP Created", `${name.trim()} created (${where}).`)
+    } catch (e: any) {
+      await DialogAlert.show(dialog, "Create Failed", e.message ?? String(e))
+    }
+  }
+
+  const merged = createMemo<DialogSelectOption<string>[]>(() => [
+    ...options(),
+    {
+      title: "Create MCP",
+      value: "__create__",
+      description: "Create a custom MCP by answering prompts",
+      category: "Manage",
+      onSelect: () => handleCreate(),
+    },
+  ])
+
   return (
     <DialogSelect
       title="Install MCP Servers"
       placeholder="Search MCP servers..."
-      options={options()}
+      options={merged()}
       onFilter={(q) => setFilter(q)}
       keybind={[]}
     />

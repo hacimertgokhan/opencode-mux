@@ -165,6 +165,107 @@ export namespace Provider {
     return sdk.responses === undefined && sdk.chat === undefined
   }
 
+  function trimUrl(url: string) {
+    const text = String(url).trim()
+    if (!text) return text
+    return text.endsWith("/") ? text.slice(0, -1) : text
+  }
+
+  function pickUrl(provider: Info, fallback: string) {
+    const value = provider.options?.baseURL
+    if (typeof value === "string" && value.trim()) return trimUrl(value)
+    return trimUrl(fallback)
+  }
+
+  function localModel(providerID: string, modelID: string, url: string, base?: Model): Model {
+    if (base) {
+      return {
+        ...base,
+        id: ModelID.make(modelID),
+        providerID: ProviderID.make(providerID),
+        name: base.name || modelID,
+        api: {
+          ...base.api,
+          id: modelID,
+          url: base.api.url || url,
+          npm: base.api.npm || "@ai-sdk/openai-compatible",
+        },
+      }
+    }
+
+    return {
+      id: ModelID.make(modelID),
+      providerID: ProviderID.make(providerID),
+      name: modelID,
+      family: "",
+      api: {
+        id: modelID,
+        url,
+        npm: "@ai-sdk/openai-compatible",
+      },
+      status: "active",
+      headers: {},
+      options: {},
+      cost: {
+        input: 0,
+        output: 0,
+        cache: {
+          read: 0,
+          write: 0,
+        },
+      },
+      limit: {
+        context: 131072,
+        output: 8192,
+      },
+      capabilities: {
+        temperature: true,
+        reasoning: false,
+        attachment: false,
+        toolcall: true,
+        input: {
+          text: true,
+          audio: false,
+          image: false,
+          video: false,
+          pdf: false,
+        },
+        output: {
+          text: true,
+          audio: false,
+          image: false,
+          video: false,
+          pdf: false,
+        },
+        interleaved: false,
+      },
+      release_date: "",
+      variants: {},
+    }
+  }
+
+  async function localDiscover(providerID: string, url: string, models: Record<string, Model>) {
+    const result: Record<string, Model> = {}
+    try {
+      const res = await fetch(`${trimUrl(url)}/models`, {
+        signal: AbortSignal.timeout(1200),
+      })
+      if (!res.ok) return result
+
+      const body = await res.json().catch(() => undefined)
+      if (!Array.isArray(body?.data)) return result
+
+      for (const item of body.data) {
+        const id = typeof item?.id === "string" ? item.id.trim() : ""
+        if (!id) continue
+        result[id] = localModel(providerID, id, url, models[id])
+      }
+      return result
+    } catch {
+      return result
+    }
+  }
+
   const CUSTOM_LOADERS: Record<string, CustomLoader> = {
     async anthropic() {
       return {
@@ -196,6 +297,30 @@ export namespace Provider {
       return {
         autoload: Object.keys(input.models).length > 0,
         options: hasKey ? {} : { apiKey: "public" },
+      }
+    },
+    ollama: async (provider) => {
+      const url = pickUrl(provider, "http://localhost:11434/v1")
+      const found = await localDiscover("ollama", url, provider.models)
+      return {
+        autoload: Object.keys(found).length > 0 || Object.keys(provider.models).length > 0,
+        options: {
+          baseURL: url,
+          textToolFallback: true,
+        },
+        discoverModels: async () => found,
+      }
+    },
+    lmstudio: async (provider) => {
+      const url = pickUrl(provider, "http://127.0.0.1:1234/v1")
+      const found = await localDiscover("lmstudio", url, provider.models)
+      return {
+        autoload: Object.keys(found).length > 0 || Object.keys(provider.models).length > 0,
+        options: {
+          baseURL: url,
+          textToolFallback: true,
+        },
+        discoverModels: async () => found,
       }
     },
     openai: async () => {
@@ -991,6 +1116,26 @@ export namespace Provider {
           const cfg = yield* config.get()
           const modelsDev = yield* Effect.promise(() => ModelsDev.get())
           const database = mapValues(modelsDev, fromModelsDevProvider)
+          if (!database["ollama"]) {
+            database["ollama"] = {
+              id: ProviderID.make("ollama"),
+              source: "custom",
+              name: "Ollama",
+              env: [],
+              options: {},
+              models: {},
+            }
+          }
+          if (!database["lmstudio"]) {
+            database["lmstudio"] = {
+              id: ProviderID.make("lmstudio"),
+              source: "custom",
+              name: "LM Studio",
+              env: [],
+              options: {},
+              models: {},
+            }
+          }
 
           const disabled = new Set(cfg.disabled_providers ?? [])
           const enabled = cfg.enabled_providers ? new Set(cfg.enabled_providers) : null
@@ -1196,18 +1341,19 @@ export namespace Provider {
             mergeProvider(providerID, partial)
           }
 
-          const gitlab = ProviderID.make("gitlab")
-          if (discoveryLoaders[gitlab] && providers[gitlab] && isProviderAllowed(gitlab)) {
+          for (const [id, discover] of Object.entries(discoveryLoaders)) {
+            const providerID = ProviderID.make(id)
+            if (!providers[providerID] || !isProviderAllowed(providerID)) continue
             yield* Effect.promise(async () => {
               try {
-                const discovered = await discoveryLoaders[gitlab]()
+                const discovered = await discover()
                 for (const [modelID, model] of Object.entries(discovered)) {
-                  if (!providers[gitlab].models[modelID]) {
-                    providers[gitlab].models[modelID] = model
+                  if (!providers[providerID].models[modelID]) {
+                    providers[providerID].models[modelID] = model
                   }
                 }
-              } catch (e) {
-                log.warn("state discovery error", { id: "gitlab", error: e })
+              } catch (error) {
+                log.warn("state discovery error", { id, error })
               }
             })
           }

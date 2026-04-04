@@ -9,7 +9,7 @@ import { Session } from "."
 import { Agent } from "../agent/agent"
 import { Provider } from "../provider/provider"
 import { ModelID, ProviderID } from "../provider/schema"
-import { type Tool as AITool, tool, jsonSchema, type ToolExecutionOptions, asSchema } from "ai"
+import { type ModelMessage, type Tool as AITool, tool, jsonSchema, type ToolExecutionOptions, asSchema } from "ai"
 import { SessionCompaction } from "./compaction"
 import { Instance } from "../project/instance"
 import { Bus } from "../bus"
@@ -63,6 +63,26 @@ IMPORTANT:
 - This tool provides your final answer - no further actions are taken after calling it`
 
 const STRUCTURED_OUTPUT_SYSTEM_PROMPT = `IMPORTANT: The user has requested structured output. You MUST use the StructuredOutput tool to provide your final response. Do NOT respond with plain text - you MUST call the StructuredOutput tool with your answer formatted according to the schema.`
+
+const TEXT_TOOL_FALLBACK_SYSTEM_PROMPT = `IMPORTANT: This model may not support native function calling.
+When an action is required, output tool calls as plain text in this exact form:
+<tool>(arg="value", count=1)
+
+Rules:
+- Replace <tool> with an actual tool id (for example: bash, read, write, grep, webfetch).
+- NEVER output the literal text "ToolName".
+- One tool call per line.
+- Do not wrap tool calls in Markdown code blocks.
+- Do not explain in prose before tool calls.
+- Use only available tool names.
+- After all required tool calls are done, then provide a short plain-text response.`
+
+const TEXT_TOOL_FALLBACK_RETRY = `[LOCAL_TOOL_FALLBACK_RETRY]
+Your previous response did not include executable tool calls.
+Now output ONLY tool calls in plain text with this exact format:
+<tool>(arg="value")
+Use a real tool id, not the literal word "ToolName".
+One call per line. No prose.`
 
 export namespace SessionPrompt {
   const log = Log.create({ service: "session.prompt" })
@@ -547,7 +567,382 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           tools[key] = item
         }
 
+        const info = yield* provider.getProvider(input.model.providerID)
+        if (info.options?.["textToolFallback"] === true) {
+          delete tools.task
+          delete tools.skill
+          for (const key of Object.keys(tools)) {
+            if (key.startsWith("aik_")) delete tools[key]
+          }
+          const last = input.messages.findLast((msg) => msg.info.role === "user")
+          const text = (last?.parts ?? [])
+            .flatMap((part) => (part.type === "text" && !part.synthetic ? [part.text] : []))
+            .join("\n")
+            .toLowerCase()
+          const web = /https?:\/\//.test(text) || /\b(web|website|url|link|docs|documentation)\b/.test(text)
+          if (!web) delete tools.webfetch
+        }
+
         return tools
+      })
+
+      function unq(text: string, quote: "'" | '"') {
+        const esc = `\\${quote}`
+        return text.replaceAll("\\\\", "\\").replaceAll(esc, quote)
+      }
+
+      function atom(text: string) {
+        const val = text.trim()
+        if (!val) return ""
+        if (val === "true") return true
+        if (val === "false") return false
+        if (val === "null") return null
+        if (/^-?\d+(\.\d+)?$/.test(val)) return Number(val)
+        return val
+      }
+
+      function args(text: string) {
+        const out: Record<string, unknown> = {}
+        let i = 0
+        while (i < text.length) {
+          while (i < text.length && (text[i] === "," || /\s/.test(text[i]))) i++
+          if (i >= text.length) break
+
+          const ks = i
+          while (i < text.length && /[A-Za-z0-9_.-]/.test(text[i])) i++
+          const key = text.slice(ks, i).trim()
+          if (!key) return
+
+          while (i < text.length && /\s/.test(text[i])) i++
+          if (i >= text.length || (text[i] !== "=" && text[i] !== ":")) return
+          i++
+          while (i < text.length && /\s/.test(text[i])) i++
+          if (i >= text.length) {
+            out[key] = ""
+            break
+          }
+
+          let val: unknown
+          const q = text[i]
+          if (q === '"' || q === "'") {
+            i++
+            const ss = i
+            let raw = ""
+            while (i < text.length) {
+              const ch = text[i]
+              if (ch === q && text[i - 1] !== "\\") break
+              raw += ch
+              i++
+            }
+            if (i > text.length) return
+            if (q === '"') val = unq(raw, '"')
+            if (q === "'") val = unq(raw, "'")
+            if (ss > text.length) return
+            if (i < text.length && text[i] === q) i++
+            out[key] = val
+            continue
+          }
+
+          const vs = i
+          while (i < text.length && text[i] !== ",") i++
+          out[key] = atom(text.slice(vs, i))
+        }
+        return out
+      }
+
+      function calls(text: string, map: Record<string, string>) {
+        const names = new Set(["toolname", "tool", "toolcall", "functioncall", "calltool", "use_tool"])
+
+        function pick(name: string) {
+          const key = name.toLowerCase()
+          return map[key] ?? (key.endsWith("tool") ? map[key.slice(0, -4)] : undefined)
+        }
+
+        function vals(text: string) {
+          const out: unknown[] = []
+          let i = 0
+          while (i < text.length) {
+            while (i < text.length && (text[i] === "," || /\s/.test(text[i]))) i++
+            if (i >= text.length) break
+            const q = text[i]
+            if (q === '"' || q === "'") {
+              i++
+              let raw = ""
+              while (i < text.length) {
+                const ch = text[i]
+                if (ch === q && text[i - 1] !== "\\") break
+                raw += ch
+                i++
+              }
+              if (i < text.length && text[i] === q) i++
+              out.push(unq(raw, q))
+              continue
+            }
+            const ss = i
+            while (i < text.length && text[i] !== ",") i++
+            out.push(atom(text.slice(ss, i)))
+          }
+          return out
+        }
+
+        function tuple(tool: string, text: string) {
+          const named = args(text)
+          if (named && Object.keys(named).length > 0) return named
+          const list = vals(text)
+          if (tool === "bash") {
+            if (typeof list[0] === "string" && typeof list[1] === "string") {
+              return { description: list[0], command: list[1] }
+            }
+            if (typeof list[0] === "string") return { command: list[0] }
+            return
+          }
+          if (tool === "webfetch") {
+            if (typeof list[0] !== "string") return
+            if (typeof list[1] === "string") return { url: list[0], format: list[1] }
+            return { url: list[0] }
+          }
+          if (tool === "read") {
+            if (typeof list[0] !== "string") return
+            return { filePath: list[0] }
+          }
+          if (tool === "ls") {
+            if (typeof list[0] !== "string") return
+            return { path: list[0] }
+          }
+          if (tool === "grep") {
+            if (typeof list[0] !== "string") return
+            if (typeof list[1] === "string") return { pattern: list[0], path: list[1] }
+            return { pattern: list[0] }
+          }
+          if (tool === "glob") {
+            if (typeof list[0] !== "string") return
+            if (typeof list[1] === "string") return { pattern: list[0], path: list[1] }
+            return { pattern: list[0] }
+          }
+          return
+        }
+
+        function wrap(text: string) {
+          const line = text.trim()
+          const m = line.match(/^([A-Za-z_][A-Za-z0-9_.-]*)(?:\s*,\s*(.*))?$/s)
+          if (!m) return
+          const ref = pick(m[1])
+          if (!ref) return
+          const tail = m[2]?.trim()
+          if (!tail) return { tool: ref, input: {} }
+          const input = args(tail)
+          if (!input) return
+          return { tool: ref, input }
+        }
+
+        const segs = (text: string) => {
+          const out: string[] = []
+          let i = 0
+          while (i < text.length) {
+            while (i < text.length && /\s/.test(text[i])) i++
+            if (i >= text.length) break
+            if (text[i] !== "(") return
+            i++
+            let d = 1
+            let q = ""
+            const ss = i
+            while (i < text.length) {
+              const ch = text[i]
+              if (q) {
+                if (ch === q && text[i - 1] !== "\\") q = ""
+                i++
+                continue
+              }
+              if (ch === '"' || ch === "'") {
+                q = ch
+                i++
+                continue
+              }
+              if (ch === "(") d++
+              if (ch === ")") d--
+              if (d === 0) break
+              i++
+            }
+            if (d !== 0) return
+            out.push(text.slice(ss, i).trim())
+            i++
+          }
+          return out
+        }
+
+        const out: Array<{ tool: string; input: Record<string, unknown> }> = []
+        const lines = text.split("\n")
+        for (let i = 0; i < lines.length; i++) {
+          const raw = lines[i].trim()
+          if (!raw) continue
+          const line = raw.startsWith("[") && raw.endsWith("]") ? raw.slice(1, -1).trim() : raw
+          const body = line.startsWith("`") && line.endsWith("`") ? line.slice(1, -1).trim() : line
+          if (!body) continue
+          const lone = body.match(/^(?:[-*]|\d+[.)])?\s*`?([A-Za-z_][A-Za-z0-9_.-]*)`?\s*$/)
+          if (lone) {
+            const ref = pick(lone[1])
+            if (!ref) continue
+            const nextRaw = lines[i + 1]?.trim()
+            if (!nextRaw) continue
+            const nextLine =
+              nextRaw.startsWith("[") && nextRaw.endsWith("]") ? nextRaw.slice(1, -1).trim() : nextRaw
+            const nextBody = nextLine.startsWith("`") && nextLine.endsWith("`") ? nextLine.slice(1, -1).trim() : nextLine
+            if (!nextBody) continue
+            const nextLone = nextBody.match(/^(?:[-*]|\d+[.)])?\s*`?([A-Za-z_][A-Za-z0-9_.-]*)`?\s*$/)
+            if (nextLone && ref !== "bash" && pick(nextLone[1])) continue
+            const chunk = nextBody.replace(/\s*[,.;:!?]\s*$/, "")
+            const input = tuple(ref, chunk) ?? (ref === "bash" ? { command: chunk } : undefined)
+            if (!input) continue
+            out.push({ tool: ref, input })
+            i++
+            continue
+          }
+          const t = body.match(/^\(\s*([A-Za-z_][A-Za-z0-9_.-]*)\s*(?:,\s*(.*))?\)\s*$/s)
+          if (t) {
+            const ref = pick(t[1])
+            if (!ref) continue
+            const tail = t[2]?.trim()
+            if (!tail) continue
+            const input = tuple(ref, tail)
+            if (!input) continue
+            out.push({ tool: ref, input })
+            continue
+          }
+          const m = body.match(/^(?:[-*]|\d+[.)])?\s*`?([A-Za-z_][A-Za-z0-9_.-]*)`?\s*(.+)$/)
+          if (!m) continue
+          const key = m[1].toLowerCase()
+          const chunk = m[2].replace(/\s*[,.;:!?]\s*$/, "")
+          const group = segs(chunk)
+          if (!group?.length) continue
+          if (names.has(key)) {
+            const row = wrap(group.join(", "))
+            if (!row) continue
+            out.push(row)
+            continue
+          }
+          const ref = pick(key)
+          if (!ref) continue
+          const input = args(group.join(", "))
+          if (!input) continue
+          out.push({ tool: ref, input })
+        }
+        return out
+      }
+
+      const replay = Effect.fn("SessionPrompt.replay")(function* (input: {
+        model: Provider.Model
+        msg: MessageV2.Assistant
+        tools: Record<string, AITool>
+        messages: ModelMessage[]
+      }) {
+        const info = yield* provider.getProvider(input.model.providerID)
+        if (info.options?.["textToolFallback"] !== true) return false
+
+        const parts = MessageV2.parts(input.msg.id)
+        if (parts.some((part) => part.type === "tool")) return false
+
+        const map = Object.fromEntries(
+          Object.keys(input.tools)
+            .filter((key) => key !== "invalid")
+            .map((key) => [key.toLowerCase(), key]),
+        )
+        if (Object.keys(map).length === 0) return false
+
+        const list = parts.flatMap((part) => {
+          if (part.type !== "text") return []
+          if (!part.text.trim()) return []
+          return calls(part.text, map)
+        })
+        if (list.length === 0) return false
+
+        for (const item of list) {
+          const fn = input.tools[item.tool]?.execute
+          if (!fn) continue
+
+          const call = PartID.ascending()
+          const run = Date.now()
+          const part = yield* sessions.updatePart({
+            id: PartID.ascending(),
+            messageID: input.msg.id,
+            sessionID: input.msg.sessionID,
+            type: "tool",
+            tool: item.tool,
+            callID: call,
+            state: { status: "running", input: item.input, time: { start: run } },
+          } satisfies MessageV2.ToolPart)
+
+          const val = yield* Effect.exit(
+            Effect.promise(() =>
+              fn(item.input as never, {
+                toolCallId: call,
+                messages: input.messages,
+                abortSignal: AbortSignal.timeout(60000),
+              } as ToolExecutionOptions),
+            ),
+          )
+
+          if (Exit.isFailure(val)) {
+            const err = Cause.squash(val.cause)
+            yield* sessions.updatePart({
+              ...part,
+              state: {
+                status: "error",
+                input: item.input,
+                error: err instanceof Error ? err.message : String(err),
+                time: { start: run, end: Date.now() },
+              },
+            })
+            continue
+          }
+
+          const out = val.value
+          if (typeof out === "string") {
+            yield* sessions.updatePart({
+              ...part,
+              state: {
+                status: "completed",
+                input: item.input,
+                output: out,
+                title: "",
+                metadata: {},
+                time: { start: run, end: Date.now() },
+              },
+            })
+            continue
+          }
+
+          if (!out || typeof out !== "object") {
+            yield* sessions.updatePart({
+              ...part,
+              state: {
+                status: "completed",
+                input: item.input,
+                output: String(out ?? ""),
+                title: "",
+                metadata: {},
+                time: { start: run, end: Date.now() },
+              },
+            })
+            continue
+          }
+
+          const row = out as Record<string, unknown>
+          yield* sessions.updatePart({
+            ...part,
+            state: {
+              status: "completed",
+              input: item.input,
+              output: typeof row.output === "string" ? row.output : String(row.output ?? ""),
+              metadata:
+                row.metadata && typeof row.metadata === "object" ? (row.metadata as Record<string, unknown>) : {},
+              title: typeof row.title === "string" ? row.title : "",
+              attachments: Array.isArray(row.attachments) ? (row.attachments as MessageV2.FilePart[]) : undefined,
+              time: { start: run, end: Date.now() },
+            },
+          })
+        }
+
+        return true
       })
 
       const handleSubtask = Effect.fn("SessionPrompt.handleSubtask")(function* (input: {
@@ -1505,8 +1900,18 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   Effect.promise(() => MessageV2.toModelMessages(msgs, model)),
                 ])
                 const system = [...env, ...(skills ? [skills] : []), ...instructions]
+                const info = yield* provider.getProvider(model.providerID)
+                if (info.options?.["textToolFallback"] === true) {
+                  const names = Object.keys(tools)
+                    .filter((key) => key !== "invalid")
+                    .toSorted()
+                  const available = names.length ? `\n\nAvailable tools:\n${names.map((key) => `- ${key}`).join("\n")}` : ""
+                  system.push(TEXT_TOOL_FALLBACK_SYSTEM_PROMPT + available)
+                }
                 const format = lastUser.format ?? { type: "text" as const }
                 if (format.type === "json_schema") system.push(STRUCTURED_OUTPUT_SYSTEM_PROMPT)
+                const callTools =
+                  info.options?.["textToolFallback"] === true && format.type !== "json_schema" ? {} : tools
                 const result = yield* handle.process({
                   user: lastUser,
                   agent,
@@ -1515,10 +1920,52 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   parentSessionID: session.parentID,
                   system,
                   messages: [...modelMsgs, ...(isLastStep ? [{ role: "assistant" as const, content: MAX_STEPS }] : [])],
-                  tools,
+                  tools: callTools,
                   model,
                   toolChoice: format.type === "json_schema" ? "required" : undefined,
                 })
+
+                const used = yield* replay({
+                  model,
+                  msg: handle.message,
+                  tools,
+                  messages: modelMsgs,
+                })
+                if (used) return "continue" as const
+
+                if (info.options?.["textToolFallback"] === true) {
+                  const out = MessageV2.parts(handle.message.id)
+                  const hasTool = out.some((part) => part.type === "tool")
+                  const hasText = out.some((part) => part.type === "text" && part.text.trim() !== "")
+                  const sent = msgs.some(
+                    (item) =>
+                      item.info.role === "user" &&
+                      item.parts.some(
+                        (part) =>
+                          part.type === "text" && part.text.includes("[LOCAL_TOOL_FALLBACK_RETRY]"),
+                      ),
+                  )
+
+                  if (!hasTool && hasText && !sent) {
+                    const reminder = yield* sessions.updateMessage({
+                      id: MessageID.ascending(),
+                      role: "user",
+                      sessionID,
+                      agent: lastUser.agent,
+                      model: lastUser.model,
+                      time: { created: Date.now() },
+                    })
+                    yield* sessions.updatePart({
+                      id: PartID.ascending(),
+                      sessionID,
+                      messageID: reminder.id,
+                      type: "text",
+                      text: TEXT_TOOL_FALLBACK_RETRY,
+                      synthetic: true,
+                    })
+                    return "continue" as const
+                  }
+                }
 
                 if (structured !== undefined) {
                   handle.message.structured = structured

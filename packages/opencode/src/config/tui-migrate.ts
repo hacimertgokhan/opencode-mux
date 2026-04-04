@@ -22,6 +22,16 @@ const TuiLegacy = z
     scroll_speed: TuiOptions.shape.scroll_speed.catch(undefined),
     scroll_acceleration: TuiOptions.shape.scroll_acceleration.catch(undefined),
     diff_style: TuiOptions.shape.diff_style.catch(undefined),
+    sidebar_width: TuiOptions.shape.sidebar_width.catch(undefined),
+    sidebar_breakpoint: TuiOptions.shape.sidebar_breakpoint.catch(undefined),
+    sidebar_position: TuiOptions.shape.sidebar_position.catch(undefined),
+    home_prompt_width: TuiOptions.shape.home_prompt_width.catch(undefined),
+    layout_preset: TuiOptions.shape.layout_preset.catch(undefined),
+    home_prompt_position: TuiOptions.shape.home_prompt_position.catch(undefined),
+    session_prompt_position: TuiOptions.shape.session_prompt_position.catch(undefined),
+    focus_mode: TuiOptions.shape.focus_mode.catch(undefined),
+    theme_mode: TuiInfo.shape.theme_mode.catch(undefined),
+    theme_mode_lock: TuiInfo.shape.theme_mode_lock.catch(undefined),
   })
   .strip()
 
@@ -92,7 +102,17 @@ function normalizeTui(data: Record<string, unknown>) {
   if (
     parsed.scroll_speed === undefined &&
     parsed.diff_style === undefined &&
-    parsed.scroll_acceleration === undefined
+    parsed.scroll_acceleration === undefined &&
+    parsed.sidebar_width === undefined &&
+    parsed.sidebar_breakpoint === undefined &&
+    parsed.sidebar_position === undefined &&
+    parsed.home_prompt_width === undefined &&
+    parsed.layout_preset === undefined &&
+    parsed.home_prompt_position === undefined &&
+    parsed.session_prompt_position === undefined &&
+    parsed.focus_mode === undefined &&
+    parsed.theme_mode === undefined &&
+    parsed.theme_mode_lock === undefined
   ) {
     return
   }

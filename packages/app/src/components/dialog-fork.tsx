@@ -1,5 +1,4 @@
 import { Component, createMemo } from "solid-js"
-import { useNavigate, useParams } from "@solidjs/router"
 import { useSync } from "@/context/sync"
 import { useSDK } from "@/context/sdk"
 import { usePrompt } from "@/context/prompt"
@@ -23,8 +22,6 @@ function formatTime(date: Date): string {
 }
 
 export const DialogFork: Component = () => {
-  const params = useParams()
-  const navigate = useNavigate()
   const sync = useSync()
   const sdk = useSDK()
   const prompt = usePrompt()
@@ -32,7 +29,7 @@ export const DialogFork: Component = () => {
   const language = useLanguage()
 
   const messages = createMemo((): ForkableMessage[] => {
-    const sessionID = params.id
+    const sessionID = sdk.sessionID
     if (!sessionID) return []
 
     const msgs = sync.data.message[sessionID] ?? []
@@ -58,7 +55,7 @@ export const DialogFork: Component = () => {
   const handleSelect = (item: ForkableMessage | undefined) => {
     if (!item) return
 
-    const sessionID = params.id
+    const sessionID = sdk.sessionID
     if (!sessionID) return
 
     const parts = sync.data.part[item.id] ?? []
@@ -77,7 +74,7 @@ export const DialogFork: Component = () => {
         }
         dialog.close()
         prompt.set(restored, undefined, { dir, id: forked.data.id })
-        navigate(`/${dir}/session/${forked.data.id}`)
+        window.location.href = `/${dir}/session/${forked.data.id}`
       })
       .catch((err: unknown) => {
         const message = err instanceof Error ? err.message : String(err)

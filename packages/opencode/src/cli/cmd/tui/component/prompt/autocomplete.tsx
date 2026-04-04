@@ -507,13 +507,13 @@ export function Autocomplete(props: {
       },
       onInput(value) {
         if (store.visible) {
+          const range = props.input().getTextRange(store.index, props.input().cursorOffset)
+          const cmd = /^\/(?:mu(?:x)?|skills?|mcps?|mcp)([-\s]|$)/.test(range)
           if (
             // Typed text before the trigger
             props.input().cursorOffset <= store.index ||
-            // There is a space between the trigger and the cursor
-            props.input().getTextRange(store.index, props.input().cursorOffset).match(/\s/) ||
-            // "/<command>" is not the sole content
-            (store.visible === "/" && value.match(/^\S+\s+\S+\s*$/))
+            (store.visible === "@" && range.match(/\s/)) ||
+            (store.visible === "/" && (range.match(/\n/) || (!!range.match(/\s/) && !cmd)))
           ) {
             hide()
           }
@@ -525,7 +525,12 @@ export function Autocomplete(props: {
         if (offset === 0) return
 
         // Check for "/" at position 0 - reopen slash commands
-        if (value.startsWith("/") && !value.slice(0, offset).match(/\s/)) {
+        const head = value.slice(0, offset)
+        if (
+          value.startsWith("/") &&
+          !head.match(/\n/) &&
+          (!head.match(/\s/) || /^\/(?:mu(?:x)?|skills?|mcps?|mcp)([-\s]|$)/.test(head))
+        ) {
           show("/")
           setStore("index", 0)
           return

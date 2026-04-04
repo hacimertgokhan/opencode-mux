@@ -97,17 +97,25 @@ if (!(root instanceof HTMLElement) && import.meta.env.DEV) {
   throw new Error(getRootNotFoundError())
 }
 
+const isMobile = () => {
+  if (typeof window === "undefined") return false
+  return /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || !!(window as any).Capacitor
+}
+
 const getCurrentUrl = () => {
   if (location.hostname.includes("opencode.ai")) return "http://localhost:4096"
   if (import.meta.env.DEV)
     return `http://${import.meta.env.VITE_OPENCODE_SERVER_HOST ?? "localhost"}:${import.meta.env.VITE_OPENCODE_SERVER_PORT ?? "4096"}`
+  if (isMobile()) return ""
   return location.origin
 }
 
 const getDefaultUrl = () => {
   const lsDefault = readDefaultServerUrl()
   if (lsDefault) return lsDefault
-  return getCurrentUrl()
+  const current = getCurrentUrl()
+  if (isMobile() && !current) return ""
+  return current
 }
 
 const platform: Platform = {
@@ -126,15 +134,18 @@ const platform: Platform = {
 }
 
 if (root instanceof HTMLElement) {
-  const server: ServerConnection.Http = { type: "http", http: { url: getCurrentUrl() } }
+  const serverUrl = getCurrentUrl()
+  const mobile = isMobile()
+  const server: ServerConnection.Http | null = serverUrl ? { type: "http", http: { url: serverUrl } } : null
+  const defaultUrl = getDefaultUrl()
   render(
     () => (
       <PlatformProvider value={platform}>
         <AppBaseProviders>
           <AppInterface
-            defaultServer={ServerConnection.Key.make(getDefaultUrl())}
-            servers={[server]}
-            disableHealthCheck
+            defaultServer={defaultUrl ? ServerConnection.Key.make(defaultUrl) : ServerConnection.Key.make("")}
+            servers={server ? [server] : []}
+            disableHealthCheck={false}
           />
         </AppBaseProviders>
       </PlatformProvider>

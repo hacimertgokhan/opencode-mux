@@ -89,18 +89,23 @@ mux
 
 This launches OpenCode with Mux routing enabled. You can also run `opencode-mux` directly.
 
+`mux` installs to `~/.opencode-mux/bin` (or `%LOCALAPPDATA%\opencode-mux\bin` on Windows), so it does not overwrite your existing `opencode` command.
+
 ### Mux Commands
 
-Inside the TUI, use `/mux` to open the Mux router menu:
+Inside the TUI, use `/mux` (or `/mu`) to open the Mux router menu:
 
 | Command | Description |
 |---------|-------------|
 | `/mux` | Open the Mux router menu |
-| `/mux-status` | Show key usage and credit status |
-| `/mux-keys` | Manage API keys (add, remove, activate, test) |
-| `/mux-models` | Select which models Mux can use |
-| `/mux-switch` | Switch to the key with the most remaining credits |
-| `/mux-about` | Show project information |
+| `/mu` | Alias for `/mux` |
+| `/mux status` | Show key usage and credit status |
+| `/mux keys` | Manage API keys (add, remove, activate, test) |
+| `/mux models` | Select which models Mux can use |
+| `/mux switch` | Switch to the key with the most remaining credits |
+| `/mux about` | Show project information |
+
+Legacy dash commands still work (`/mux-status`, `/mux-keys`, `/mux-models`, `/mux-switch`, `/mux-about`).
 
 **Keyboard shortcut:** Press `Tab` with an empty prompt to toggle Mux mode on/off.
 
@@ -110,8 +115,8 @@ Mux stores its configuration in `~/.opencode-router-manager/config.json`. You ca
 
 ## How It Works
 
-1. **Add your OpenRouter API keys** using `/mux-keys` → Add Key
-2. **Select your preferred models** using `/mux-models`
+1. **Add your OpenRouter API keys** using `/mux keys` → Add Key
+2. **Select your preferred models** using `/mux models`
 3. **Enable Mux mode** by pressing `Tab` in the prompt or via `/mux` → Enable
 4. **Start coding** — Mux automatically routes your prompts to the best available key and model
 

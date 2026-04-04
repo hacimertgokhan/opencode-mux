@@ -8,14 +8,14 @@ $ErrorActionPreference = "Stop"
 
 function Write-Step {
   param([string]$Message)
-  Write-Host "[opencode-mux] $Message"
+  Write-Host "[mux] $Message"
 }
 
 function Resolve-DefaultBinaryPath {
   $scriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $PSCommandPath }
   $candidates = @(
-    (Join-Path $scriptDir "packages\opencode\dist\opencode-mux-windows-x64\bin\opencode-mux.exe"),
-    (Join-Path $scriptDir "packages\opencode\dist\opencode-mux-windows-x64-baseline\bin\opencode-mux.exe")
+    (Join-Path $scriptDir "packages\opencode\dist\opencode-mux-windows-x64\bin\mux.exe"),
+    (Join-Path $scriptDir "packages\opencode\dist\opencode-mux-windows-x64-baseline\bin\mux.exe")
   )
 
   foreach ($candidate in $candidates) {
@@ -24,7 +24,7 @@ function Resolve-DefaultBinaryPath {
     }
   }
 
-  throw "Built binary not found. Pass -BinaryPath or build opencode-mux first."
+  throw "Built binary not found. Pass -BinaryPath or build mux first."
 }
 
 if (-not $BinaryPath) {
@@ -37,10 +37,9 @@ if (-not (Test-Path $BinaryPath)) {
 
 $resolvedBinaryPath = (Resolve-Path $BinaryPath).Path
 $resolvedInstallDir = [System.IO.Path]::GetFullPath($InstallDir)
-$targetExe = Join-Path $resolvedInstallDir "opencode-mux.exe"
+$targetExe = Join-Path $resolvedInstallDir "mux.exe"
 $muxCmd = Join-Path $resolvedInstallDir "mux.cmd"
 $muxPs1 = Join-Path $resolvedInstallDir "mux.ps1"
-$opencodeMuxCmd = Join-Path $resolvedInstallDir "opencode-mux.cmd"
 
 if ((Test-Path $resolvedInstallDir) -and -not $Force) {
   Write-Step "Installing into existing directory: $resolvedInstallDir"
@@ -49,10 +48,9 @@ if ((Test-Path $resolvedInstallDir) -and -not $Force) {
 New-Item -ItemType Directory -Force -Path $resolvedInstallDir | Out-Null
 Copy-Item -Force $resolvedBinaryPath $targetExe
 
-$cmdWrapper = "@echo off`r`n`"%~dp0opencode-mux.exe`" %*`r`n"
+$cmdWrapper = "@echo off`r`n`"%~dp0mux.exe`" %*`r`n"
 $psWrapper = "& `"$targetExe`" @args`r`n"
 Set-Content -Path $muxCmd -Value $cmdWrapper -Encoding ASCII
-Set-Content -Path $opencodeMuxCmd -Value $cmdWrapper -Encoding ASCII
 Set-Content -Path $muxPs1 -Value $psWrapper -Encoding ASCII
 
 $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
@@ -92,7 +90,7 @@ if (-not $hasPath) {
 }
 
 Write-Step "Installed binary: $targetExe"
-Write-Step "Command aliases: mux, opencode-mux"
+Write-Step "Command: mux"
 Write-Host ""
 Write-Host "Run in a new terminal: mux"
 Write-Host "Or right now in this session: $muxCmd"

@@ -198,7 +198,7 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
       })
     }
 
-    const isReady = createMemo(() => ready() && !!state.active)
+    const isReady = createMemo(() => ready())
 
     const check = (conn: ServerConnection.Any) => checkServerHealth(conn.http).then((x) => x.healthy)
 
@@ -216,9 +216,10 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
 
     const origin = createMemo(() => projectsKey(state.active))
     const projectsList = createMemo(() => store.projects[origin()] ?? [])
-    const current: Accessor<ServerConnection.Any | undefined> = createMemo(
-      () => allServers().find((s) => ServerConnection.key(s) === state.active) ?? allServers()[0],
-    )
+    const current: Accessor<ServerConnection.Any | undefined> = createMemo(() => {
+      if (!state.active) return
+      return allServers().find((s) => ServerConnection.key(s) === state.active) ?? allServers()[0]
+    })
     const isLocal = createMemo(() => {
       const c = current()
       return (c?.type === "sidecar" && c.variant === "base") || (c?.type === "http" && isLocalHost(c.http.url))

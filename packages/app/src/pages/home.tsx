@@ -85,6 +85,9 @@ export default function Home() {
         />
         {server.name}
       </Button>
+      <Button size="normal" variant="ghost" class="mt-1 mx-auto text-12-regular text-text-weak" onClick={() => navigate("/mobile")}>
+        Mobile Control
+      </Button>
       <Switch>
         <Match when={sync.data.project.length > 0}>
           <div class="mt-20 w-full flex flex-col gap-4">

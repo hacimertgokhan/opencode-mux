@@ -229,44 +229,51 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         )
       })
 
-      const openrouterCatalog = createMemo<ModelCatalogEntry[]>(() => {
-        const provider = sync.data.provider.find((item) => item.id === "openrouter")
-        if (!provider) return []
-        return Object.values(provider.models).map((model) => ({
-          providerID: provider.id,
-          modelID: model.id,
-          name: model.name ?? model.id,
-          cost: {
-            input: model.cost?.input,
-            output: model.cost?.output,
-          },
-        }))
-      })
+      const muxCatalog = createMemo<ModelCatalogEntry[]>(() =>
+        sync.data.provider.flatMap((provider) =>
+          Object.values(provider.models).map((model) => ({
+            providerID: provider.id,
+            modelID: model.id,
+            name: model.name ?? model.id,
+            cost: {
+              input: model.cost?.input,
+              output: model.cost?.output,
+            },
+          })),
+        ),
+      )
 
       // Mux-aware resolved model: auto-resolves best model when mux is enabled
       const [resolvedModel, setResolvedModel] = createSignal<ReturnType<typeof currentModel>>(undefined)
-      let lastResolved: ReturnType<typeof currentModel> = undefined
+      let lastKey = ""
 
       createEffect(() => {
         const base = currentModel()
         if (!base) {
+          lastKey = ""
           setResolvedModel(undefined)
           return
         }
-        if (!modelStore.mux.enabled || base.providerID !== "openrouter") {
+        if (!modelStore.mux.enabled) {
+          lastKey = ""
           setResolvedModel(base)
           return
         }
-        const muxLen = modelStore.mux.selected.length
-        if (lastResolved && lastResolved.modelID === base.modelID) return
-        resolveMuxSelection(base, openrouterCatalog())
+        const selected = modelStore.mux.selected.map((item) => `${item.providerID}/${item.modelID}`).join(",")
+        const key = `${base.providerID}/${base.modelID}|${selected}`
+        if (key === lastKey) return
+        lastKey = key
+        resolveMuxSelection(base, muxCatalog())
           .then((result) => {
             if (result?.model) {
-              lastResolved = result.model
               setResolvedModel(result.model)
+              return
             }
+            setResolvedModel(base)
           })
-          .catch(() => {})
+          .catch(() => {
+            setResolvedModel(base)
+          })
       })
 
       const effectiveModel = createMemo(() => resolvedModel() ?? currentModel())
@@ -442,7 +449,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
             return modelStore.mux.selected
           },
           catalog() {
-            return openrouterCatalog()
+            return muxCatalog()
           },
           async setEnabled(enabled: boolean) {
             const mux = await setMuxEnabled(enabled)
@@ -459,7 +466,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
             return mux.selectedModels
           },
           async resolve(model: { providerID: string; modelID: string }) {
-            return resolveMuxSelection(model, openrouterCatalog())
+            return resolveMuxSelection(model, muxCatalog())
           },
         },
       }

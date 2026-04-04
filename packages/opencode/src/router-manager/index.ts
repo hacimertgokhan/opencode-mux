@@ -9,6 +9,14 @@ const OPENROUTER_KEY_URL = "https://openrouter.ai/api/v1/key"
 const AUTHORS = [{ name: "hacimertgokhan", github: "https://github.com/hacimertgokhan" }]
 const PROJECT_URL = "https://github.com/hacimertgokhan/opencode-mux"
 const VERSION = "1.0.0"
+const OPENROUTER_RETRY_HINTS = [
+  "upstream error from alibaba",
+  "request rate increased too quickly",
+  "scale requests more smoothly over time",
+  "rate limit",
+  "rate-limit",
+  "too many requests",
+]
 
 export type APIKeyEntry = {
   key: string
@@ -284,7 +292,7 @@ export function getMuxCandidates(current: ModelRef, catalog: ModelCatalogEntry[]
 export async function resolveMuxSelection(current: ModelRef, catalog: ModelCatalogEntry[]) {
   const config = await loadConfig()
   const mux = normalizeMux(config.mux)
-  if (!mux.enabled || current.providerID !== "openrouter") {
+  if (!mux.enabled) {
     return {
       model: current,
       keySwitched: false,
@@ -305,30 +313,59 @@ export async function resolveMuxSelection(current: ModelRef, catalog: ModelCatal
 
   const activeIndex = config.activeKeyIndex
   const activeKey = config.keys[activeIndex]
-  const keyStates = await Promise.all(
-    config.keys.map(async (key, index) => {
-      if (!key.enabled) return { index, key, remaining: null as number | null, ok: false }
-      try {
-        const info = await getKeyInfo(key.key)
-        return { index, key, remaining: info.limit_remaining ?? null, ok: true }
-      } catch {
-        return { index, key, remaining: null as number | null, ok: false }
-      }
-    }),
-  )
+  let keyStates:
+    | {
+        index: number
+        key: APIKeyEntry
+        remaining: number | null
+        ok: boolean
+      }[]
+    | undefined
+
+  async function states() {
+    if (keyStates) return keyStates
+    keyStates = await Promise.all(
+      config.keys.map(async (key, index) => {
+        if (!key.enabled) return { index, key, remaining: null as number | null, ok: false }
+        try {
+          const info = await getKeyInfo(key.key)
+          return { index, key, remaining: info.limit_remaining ?? null, ok: true }
+        } catch {
+          return { index, key, remaining: null as number | null, ok: false }
+        }
+      }),
+    )
+    return keyStates
+  }
 
   for (const candidate of candidates) {
-    const activeUsable = keyStates.find((state) => state.index === activeIndex && state.ok && canUseModel(state.remaining, candidate))
+    const modelSwitched = modelRefKey(candidate) !== modelRefKey(current)
+
+    if (candidate.providerID !== "openrouter") {
+      return {
+        model: { providerID: candidate.providerID, modelID: candidate.modelID },
+        keySwitched: false,
+        modelSwitched,
+        reason: modelSwitched ? "direct-provider" : "same-model",
+      }
+    }
+
+    const list = await states()
+    if (!list.length) {
+      continue
+    }
+
+    const activeUsable = list.find((state) => state.index === activeIndex && state.ok && canUseModel(state.remaining, candidate))
     if (activeUsable) {
       return {
         model: { providerID: candidate.providerID, modelID: candidate.modelID },
         keySwitched: false,
-        modelSwitched: candidate.modelID !== current.modelID,
-        reason: candidate.modelID === current.modelID ? "same-key-same-model" : "same-key-different-model",
+        modelSwitched,
+        reason: modelSwitched ? "same-key-different-model" : "same-key-same-model",
       }
     }
 
-    const alternative = keyStates
+    const alternative = list
       .filter((state) => state.ok && canUseModel(state.remaining, candidate))
       .sort((a, b) => bestRemainingValue(b.remaining) - bestRemainingValue(a.remaining))[0]
 
@@ -341,8 +378,8 @@ export async function resolveMuxSelection(current: ModelRef, catalog: ModelCatal
     return {
       model: { providerID: candidate.providerID, modelID: candidate.modelID },
       keySwitched: activeKey?.key !== alternative.key.key,
-      modelSwitched: candidate.modelID !== current.modelID,
-      reason: candidate.modelID === current.modelID ? "different-key-same-model" : "different-key-different-model",
+      modelSwitched,
+      reason: modelSwitched ? "different-key-different-model" : "different-key-same-model",
     }
   }
 
@@ -358,7 +395,16 @@ export async function modelAvailabilityOutput(catalog: ModelCatalogEntry[]) {
   const config = await loadConfig()
   const mux = normalizeMux(config.mux)
   if (config.keys.length === 0) {
-    return "No API keys configured."
+    const local = catalog.filter((item) => item.providerID !== "openrouter")
+    if (!local.length) {
+      return "No OpenRouter API keys configured."
+    }
+    const names = local.slice(0, 5).map((item) => `${item.providerID}/${item.modelID}`)
+    return [
+      "No OpenRouter API keys configured.",
+      `Local/other models in mux catalog: ${names.join(", ")}${local.length > 5 ? ` (+${local.length - 5} more)` : ""}`,
+      "These providers do not need OpenRouter key rotation.",
+    ].join("\n")
   }
 
   const selectedCatalog = (mux.selectedModels.length ? mux.selectedModels : catalog)
@@ -367,10 +413,13 @@ export async function modelAvailabilityOutput(catalog: ModelCatalogEntry[]) {
 
   const models = selectedCatalog.slice(0, 12)
   const activeIndex = config.activeKeyIndex
+  const active = config.keys[activeIndex]
+  const meta = active ? await getKeyInfo(active.key).catch(() => undefined) : undefined
 
   const lines = [
     "MUX MODEL AVAILABILITY",
     `Status: ${mux.enabled ? "ENABLED" : "DISABLED"}  |  Models: ${mux.selectedModels.length} selected  |  Keys: ${config.keys.length} configured`,
+    `Active key: ${active ? `#${activeIndex + 1} - ${meta?.label || active.label || "Unnamed"}` : "None"}`,
   ]
 
   for (const [index, key] of config.keys.entries()) {
@@ -529,7 +578,14 @@ export async function infoOutput() {
     return "No API keys configured. Add one with `opencode-mux router keys add <API_KEY> [label]`."
   }
 
-  const lines = ["OpenRouter key status - token and credit usage", "", "=".repeat(70)]
+  const active = config.keys[config.activeKeyIndex]
+  const meta = active ? await getKeyInfo(active.key).catch(() => undefined) : undefined
+  const lines = [
+    "OpenRouter key status - token and credit usage",
+    "",
+    `Active key: ${active ? `#${config.activeKeyIndex + 1} - ${meta?.label || active.label || "Unnamed"}` : "None"}`,
+    "=".repeat(70),
+  ]
   for (const [index, key] of config.keys.entries()) {
     const marker = index === config.activeKeyIndex ? " [ACTIVE]" : ""
     lines.push("")
@@ -624,7 +680,7 @@ export async function switchOutput() {
 
   const result = await switchToBestKey({ syncAuth: true })
   if (!result.switched) {
-    return `Current key #${result.index + 1} is already the best option (${formatCredits(result.remaining)} remaining).`
+    return `Current key #${result.index + 1} (${result.key.label || "Unnamed"}) is already the best option (${formatCredits(result.remaining)} remaining).`
   }
   return [
     `Switched from #${result.previousIndex + 1} to #${result.index + 1} (${result.key.label || "Unnamed"})`,
@@ -650,9 +706,9 @@ export async function retryOpenRouterWithKeyRotation(
   input: RequestInfo | URL,
   init?: RequestInit,
 ) {
-  const response = await fetchFn(input, init)
-  if (![402, 429].includes(response.status)) {
-    return response
+  const res = await fetchFn(input, init)
+  if (!(await shouldRotateOpenRouterKey(res))) {
+    return res
   }
 
   const headers = new Headers(init?.headers)
@@ -663,11 +719,11 @@ export async function retryOpenRouterWithKeyRotation(
   try {
     next = await switchToBestKey({ excludeKey: currentKey, syncAuth: true })
   } catch {
-    return response
+    return res
   }
 
   if (!next?.key?.key || next.key.key === currentKey) {
-    return response
+    return res
   }
 
   const retryHeaders = new Headers(init?.headers)
@@ -676,4 +732,16 @@ export async function retryOpenRouterWithKeyRotation(
     ...init,
     headers: retryHeaders,
   })
+}
+
+export async function shouldRotateOpenRouterKey(res: Response) {
+  if ([402, 429].includes(res.status)) return true
+  if (res.status < 400) return false
+  const text = await res
+    .clone()
+    .text()
+    .catch(() => "")
+  if (!text) return false
+  const lowered = text.toLowerCase()
+  return OPENROUTER_RETRY_HINTS.some((hint) => lowered.includes(hint))
 }

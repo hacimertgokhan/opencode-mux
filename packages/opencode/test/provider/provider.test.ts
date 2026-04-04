@@ -250,6 +250,66 @@ test("custom provider with npm package", async () => {
   })
 })
 
+test("loads ollama and lmstudio models from local /models endpoints", async () => {
+  const prev = globalThis.fetch
+  globalThis.fetch = (async (input, init) => {
+    const req = input instanceof Request ? input : new Request(input, init)
+    const url = new URL(req.url)
+    if (url.pathname === "/v1/models") {
+      return Response.json({
+        data: [{ id: "qwen3:8b" }, { id: "llama3.2:3b" }],
+      })
+    }
+    return new Response("not found", { status: 404 })
+  }) as typeof fetch
+
+  try {
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        await Bun.write(
+          path.join(dir, "opencode.json"),
+          JSON.stringify({
+            $schema: "https://opencode.ai/config.json",
+            provider: {
+              ollama: {
+                options: {
+                  baseURL: "http://local-ollama/v1",
+                },
+              },
+              lmstudio: {
+                options: {
+                  baseURL: "http://local-lmstudio/v1",
+                },
+              },
+            },
+          }),
+        )
+      },
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const providers = await Provider.list()
+
+        const ollama = providers[ProviderID.make("ollama")]
+        expect(ollama).toBeDefined()
+        expect(ollama.models["qwen3:8b"]).toBeDefined()
+        expect(ollama.models["llama3.2:3b"]).toBeDefined()
+        expect(ollama.options?.["textToolFallback"]).toBe(true)
+
+        const lmstudio = providers[ProviderID.make("lmstudio")]
+        expect(lmstudio).toBeDefined()
+        expect(lmstudio.models["qwen3:8b"]).toBeDefined()
+        expect(lmstudio.models["llama3.2:3b"]).toBeDefined()
+        expect(lmstudio.options?.["textToolFallback"]).toBe(true)
+      },
+    })
+  } finally {
+    globalThis.fetch = prev
+  }
+})
+
 test("env variable takes precedence, config merges options", async () => {
   await using tmp = await tmpdir({
     init: async (dir) => {

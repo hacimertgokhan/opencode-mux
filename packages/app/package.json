@@ -14,6 +14,9 @@
     "dev": "vite",
     "build": "vite build",
     "serve": "vite preview",
+    "cap:sync": "cap sync android",
+    "apk:debug": "JAVA_HOME=$(/usr/libexec/java_home -v 21) bun run build && cap sync android && cd android && JAVA_HOME=$(/usr/libexec/java_home -v 21) ./gradlew assembleDebug",
+    "apk:release": "JAVA_HOME=$(/usr/libexec/java_home -v 21) bun run build && cap sync android && cd android && JAVA_HOME=$(/usr/libexec/java_home -v 21) ./gradlew assembleRelease",
     "test": "bun run test:unit",
     "test:unit": "bun test --preload ./happydom.ts ./src",
     "test:unit:watch": "bun test --watch --preload ./happydom.ts ./src",
@@ -24,6 +27,7 @@
   },
   "license": "MIT",
   "devDependencies": {
+    "@capacitor/cli": "8.3.0",
     "@happy-dom/global-registrator": "20.0.11",
     "@playwright/test": "1.57.0",
     "@tailwindcss/vite": "catalog:",
@@ -38,6 +42,8 @@
     "vite-plugin-solid": "catalog:"
   },
   "dependencies": {
+    "@capacitor/android": "8.3.0",
+    "@capacitor/core": "8.3.0",
     "@kobalte/core": "catalog:",
     "@opencode-ai/sdk": "workspace:*",
     "@opencode-ai/ui": "workspace:*",

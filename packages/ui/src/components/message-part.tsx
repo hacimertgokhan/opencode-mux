@@ -1237,6 +1237,7 @@ function ToolFileAccordion(props: { path: string; actions?: JSX.Element; childre
 PART_MAPPING["tool"] = function ToolPartDisplay(props) {
   const data = useData()
   const i18n = useI18n()
+  const location = useLocation()
   const part = () => props.part as ToolPart
   if (part().tool === "todowrite") return null
 
@@ -1257,7 +1258,7 @@ PART_MAPPING["tool"] = function ToolPartDisplay(props) {
   })
   const taskHref = createMemo(() => {
     if (part().tool !== "task") return
-    return sessionLink(taskId(), useLocation().pathname, data.sessionHref)
+    return sessionLink(taskId(), location.pathname, data.sessionHref)
   })
   const taskSubtitle = createMemo(() => {
     if (part().tool !== "task") return undefined

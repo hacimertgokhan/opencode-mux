@@ -4,7 +4,9 @@ import { useDialog } from "@tui/ui/dialog"
 import { useSDK } from "@tui/context/sdk"
 import { DialogConfirm } from "@tui/ui/dialog-confirm"
 import { DialogAlert } from "@tui/ui/dialog-alert"
+import { DialogPrompt } from "@tui/ui/dialog-prompt"
 import { Locale } from "@/util/locale"
+import { createDebouncedSignal } from "../util/signal"
 
 type RepoItem = {
   owner: string
@@ -17,18 +19,32 @@ type RepoItem = {
   url: string
 }
 
+type SearchItem = {
+  owner: string
+  repo: string
+  name: string
+  description?: string
+  stars?: number
+  skills?: { name: string; description?: string }[]
+  url: string
+}
+
 export function DialogSkillInstallerBrowse() {
   const dialog = useDialog()
   const sdk = useSDK()
   dialog.setSize("large")
+  const [query, setQuery] = createDebouncedSignal("", 180)
 
-  const [results, { refetch }] = createResource(async () => {
+  const [results, { refetch }] = createResource(query, async (query) => {
     try {
       const baseUrl = sdk.url.replace(/\/$/, "")
-      const res = await fetch(`${baseUrl}/skill-installer/search`)
+      const url = new URL(`${baseUrl}/skill-installer/search`)
+      const q = query.trim()
+      if (q) url.searchParams.set("q", q)
+      const res = await fetch(url)
       if (!res.ok) return []
-      const data = await res.json()
-      return (data.items ?? []).map((item: any) => ({
+      const data = (await res.json()) as { items?: SearchItem[] }
+      return (data.items ?? []).map((item) => ({
         owner: item.owner,
         repo: item.repo,
         name: item.name,
@@ -74,6 +90,17 @@ export function DialogSkillInstallerBrowse() {
   })
 
   async function handleInstall(item: RepoItem) {
+    const where = await DialogPrompt.show(dialog, "Install Scope", {
+      placeholder: "project | mux",
+      value: "project",
+    })
+    if (!where) return
+    const scope = where.trim().toLowerCase()
+    if (scope !== "project" && scope !== "local" && scope !== "mux" && scope !== "global") {
+      await DialogAlert.show(dialog, "Invalid Scope", "Use 'project' or 'mux'.")
+      return
+    }
+
     const skillList = item.skills.length > 0
       ? item.skills.slice(0, 6).map((s) => `  • ${s.name}${s.description ? `: ${s.description.slice(0, 40)}` : ""}`).join("\n")
       : "All available skills will be discovered and installed"
@@ -92,7 +119,7 @@ export function DialogSkillInstallerBrowse() {
       const res = await fetch(`${baseUrl}/skill-installer/install`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ owner: item.owner, repo: item.repo }),
+        body: JSON.stringify({ owner: item.owner, repo: item.repo, scope: scope === "project" || scope === "local" ? "project" : "global" }),
       })
       const data = await res.json()
       if (data?.installed?.length) {
@@ -105,8 +132,9 @@ export function DialogSkillInstallerBrowse() {
       } else {
         await DialogAlert.show(dialog, "No Skills Found", `No installable skills found in ${item.owner}/${item.repo}.`)
       }
-    } catch (e: any) {
-      await DialogAlert.show(dialog, "Install Failed", e.message ?? String(e))
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      await DialogAlert.show(dialog, "Install Failed", msg)
     }
   }
 
@@ -115,6 +143,8 @@ export function DialogSkillInstallerBrowse() {
       title="Browse Skills"
       placeholder="Search GitHub for skills..."
       options={options()}
+      skipFilter={true}
+      onFilter={setQuery}
       keybind={[]}
     />
   )

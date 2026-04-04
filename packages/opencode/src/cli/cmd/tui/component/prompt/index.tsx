@@ -35,6 +35,7 @@ import { useToast } from "../../ui/toast"
 import { useKV } from "../../context/kv"
 import { useTextareaKeybindings } from "../textarea-keybindings"
 import { DialogSkill } from "../dialog-skill"
+import { Ready } from "@/ready"
 
 export type PromptProps = {
   sessionID?: string
@@ -595,6 +596,16 @@ export function Prompt(props: PromptProps) {
     },
   ])
 
+  function clear() {
+    input.extmarks.clear()
+    setStore("prompt", {
+      input: "",
+      parts: [],
+    })
+    setStore("extmarkToPartIndex", new Map())
+    input.clear()
+  }
+
   async function submit() {
     if (props.disabled) return
     if (autocomplete?.visible) return
@@ -604,6 +615,74 @@ export function Prompt(props: PromptProps) {
       exit()
       return
     }
+
+    const out = await Ready.run({
+      text: store.prompt.input,
+      cwd: process.cwd(),
+    })
+    if (out.steps.length > 0) {
+      const mode = store.mode
+      if (kv.get("personalize_enabled", false)) {
+        await Ready.prompt(store.prompt.input)
+      }
+      history.append({
+        ...store.prompt,
+        mode,
+      })
+      clear()
+      props.onSubmit?.()
+
+      if (out.fail.length === 0) {
+        toast.show({
+          variant: "info",
+          message: `Ran ${out.done.length} action${out.done.length === 1 ? "" : "s"}`,
+        })
+        return
+      }
+
+      const lead = out.fail[0]?.error ?? "unknown error"
+      const head = out.done.length
+        ? `Ran ${out.done.length} action${out.done.length === 1 ? "" : "s"}, ${out.fail.length} failed`
+        : `Failed (${out.fail.length})`
+      toast.show({
+        variant: out.done.length ? "warning" : "error",
+        message: `${head}: ${lead}`,
+      })
+      return
+    }
+
+    const head = store.prompt.input.split("\n")[0]?.trim() ?? ""
+    if (store.mode === "normal" && head.startsWith("/")) {
+      const seg = head
+        .slice(1)
+        .split(/\s+/)
+        .map((x) => x.trim())
+        .filter(Boolean)
+      for (let i = seg.length; i > 0; i--) {
+        const key = seg.slice(0, i).join(" ")
+        if (command.runSlash(key)) {
+          history.append({
+            ...store.prompt,
+            mode: store.mode,
+          })
+          clear()
+          props.onSubmit?.()
+          return
+        }
+        if (i !== 1) continue
+        const base = seg[0].split("-")[0]
+        if (!base || base === seg[0]) continue
+        if (!command.runSlash(base)) continue
+        history.append({
+          ...store.prompt,
+          mode: store.mode,
+        })
+        clear()
+        props.onSubmit?.()
+        return
+      }
+    }
+
     const selectedModel = local.model.current()
     if (!selectedModel) {
       promptModelWarning()
@@ -721,12 +800,7 @@ export function Prompt(props: PromptProps) {
       ...store.prompt,
       mode: currentMode,
     })
-    input.extmarks.clear()
-    setStore("prompt", {
-      input: "",
-      parts: [],
-    })
-    setStore("extmarkToPartIndex", new Map())
+    clear()
     props.onSubmit?.()
 
     // temporary hack to make sure the message is sent
@@ -737,7 +811,6 @@ export function Prompt(props: PromptProps) {
           sessionID,
         })
       }, 50)
-    input.clear()
   }
   const exit = useExit()
 
@@ -1096,6 +1169,12 @@ export function Prompt(props: PromptProps) {
                       {local.model.parsed().model}
                     </text>
                     <text fg={theme.textMuted}>{local.model.parsed().provider}</text>
+                    <Show when={local.model.mux.enabled()}>
+                      <text fg={theme.textMuted}>·</text>
+                      <text>
+                        <span style={{ fg: theme.warning, bold: true }}>MUX ON</span>
+                      </text>
+                    </Show>
                     <Show when={showVariant()}>
                       <text fg={theme.textMuted}>·</text>
                       <text>

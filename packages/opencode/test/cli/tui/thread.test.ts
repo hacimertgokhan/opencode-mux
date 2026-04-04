@@ -10,6 +10,7 @@ import * as Network from "../../../src/cli/network"
 import * as Win32 from "../../../src/cli/cmd/tui/win32"
 import { TuiConfig } from "../../../src/config/tui"
 import { Instance } from "../../../src/project/instance"
+import { Ready } from "../../../src/ready"
 
 const stop = new Error("stop")
 const seen = {
@@ -61,6 +62,10 @@ describe("tui thread", () => {
       $0: "opencode",
       project,
       prompt: "hi",
+      ready: false,
+      startupRun: false,
+      personalize: undefined,
+      readyPrompt: undefined,
       model: undefined,
       agent: undefined,
       session: undefined,
@@ -124,5 +129,51 @@ describe("tui thread", () => {
 
   test("uses the real cwd after resolving a relative project from PWD", async () => {
     await check(".")
+  })
+
+  test("handles --ready mode without starting tui worker", async () => {
+    setup()
+    spyOn(Ready, "state").mockResolvedValue({
+      enabled: false,
+      startup: false,
+      prompt: "spotify'ı aç",
+    })
+    spyOn(Ready, "prompt").mockResolvedValue({
+      enabled: false,
+      startup: false,
+      prompt: "spotify'ı aç",
+    })
+    const run = spyOn(Ready, "run").mockResolvedValue({
+      text: "spotify'ı aç",
+      steps: [{ type: "app", app: "Spotify" }],
+      done: [{ type: "app", app: "Spotify" }],
+      fail: [],
+    })
+
+    const { TuiThreadCommand } = await import("../../../src/cli/cmd/tui/thread")
+    const args: Parameters<NonNullable<typeof TuiThreadCommand.handler>>[0] = {
+      _: [],
+      $0: "opencode",
+      project: undefined,
+      prompt: undefined,
+      ready: true,
+      startupRun: false,
+      personalize: undefined,
+      readyPrompt: undefined,
+      model: undefined,
+      agent: undefined,
+      session: undefined,
+      continue: false,
+      fork: false,
+      port: 0,
+      hostname: "127.0.0.1",
+      mdns: false,
+      "mdns-domain": "opencode.local",
+      mdnsDomain: "opencode.local",
+      cors: [],
+    }
+
+    await expect(TuiThreadCommand.handler(args)).resolves.toBeUndefined()
+    expect(run).toHaveBeenCalled()
   })
 })

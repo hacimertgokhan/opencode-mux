@@ -16,6 +16,8 @@ import { win32DisableProcessedInput, win32InstallCtrlCGuard } from "./win32"
 import { TuiConfig } from "@/config/tui"
 import { Instance } from "@/project/instance"
 import { writeHeapSnapshot } from "v8"
+import { Ready } from "@/ready"
+import os from "os"
 
 declare global {
   const OPENCODE_WORKER_PATH: string
@@ -96,6 +98,24 @@ export const TuiThreadCommand = cmd({
         type: "string",
         describe: "prompt to use",
       })
+      .option("ready", {
+        type: "boolean",
+        describe: "run local ready actions from text (open app/project shortcuts)",
+      })
+      .option("startupRun", {
+        type: "boolean",
+        alias: ["startup-run"],
+        hidden: true,
+      })
+      .option("readyPrompt", {
+        type: "string",
+        alias: ["ready-prompt"],
+        describe: "default ready text used by startup trigger and plain --ready runs",
+      })
+      .option("personalize", {
+        type: "boolean",
+        describe: "toggle personalize mode (also toggles startup trigger); use --no-personalize to disable",
+      })
       .option("agent", {
         type: "string",
         describe: "agent to use",
@@ -114,6 +134,75 @@ export const TuiThreadCommand = cmd({
         process.exitCode = 1
         return
       }
+      const prompt = await input(args.prompt)
+
+      if (args.readyPrompt?.trim()) {
+        await Ready.prompt(args.readyPrompt.trim())
+        UI.println(UI.Style.TEXT_INFO_BOLD + "~  " + UI.Style.TEXT_NORMAL + "Saved ready prompt")
+      }
+
+      if (args.personalize !== undefined) {
+        const out = await Ready.personalize(args.personalize)
+        const mark = out.state.enabled ? "✓" : "~"
+        const text = out.state.enabled ? "enabled" : "disabled"
+        UI.println(UI.Style.TEXT_INFO_BOLD + `${mark}  ` + UI.Style.TEXT_NORMAL + `Personalize mode ${text}`)
+        UI.println(UI.Style.TEXT_DIM + out.message + UI.Style.TEXT_NORMAL)
+      }
+
+      if (args.ready) {
+        const cfg = await Ready.state()
+        const text = (() => {
+          const line = prompt?.trim()
+          if (line) return line
+
+          const seed = typeof args.project === "string" ? args.project.trim() : ""
+          if (seed) return seed
+
+          if (args.startupRun && cfg.prompt) return cfg.prompt
+          if (cfg.prompt) return cfg.prompt
+          return
+        })()
+
+        if (!text) {
+          UI.error("No ready text found. Use --prompt, pipe stdin, or set --ready-prompt first.")
+          process.exitCode = 1
+          return
+        }
+
+        const out = await Ready.run({
+          text,
+          cwd: args.startupRun ? process.env.HOME ?? os.homedir() : process.cwd(),
+        })
+
+        if (out.steps.length === 0) {
+          UI.error("No local action found in ready text.")
+          process.exitCode = 1
+          return
+        }
+
+        await Ready.prompt(text)
+
+        for (const item of out.done) {
+          const info =
+            item.type === "app" ? `Opened app: ${item.app}` : `Opened: ${item.path}${item.app ? ` (${item.app})` : ""}`
+          UI.println(UI.Style.TEXT_SUCCESS + "✓  " + UI.Style.TEXT_NORMAL + info)
+        }
+
+        for (const item of out.fail) {
+          const info =
+            item.step.type === "app"
+              ? `Failed app: ${item.step.app}`
+              : `Failed path: ${item.step.path}${item.step.app ? ` (${item.step.app})` : ""}`
+          UI.println(UI.Style.TEXT_DANGER_BOLD + "✗  " + UI.Style.TEXT_NORMAL + `${info} · ${item.error}`)
+        }
+
+        if (out.fail.length > 0 && out.done.length === 0) {
+          process.exitCode = 1
+        }
+        return
+      }
+
+      if (args.personalize !== undefined || args.readyPrompt?.trim()) return
 
       // Resolve relative --project paths from PWD, then use the real cwd after
       // chdir so the thread and worker share the same directory key.
@@ -169,7 +258,6 @@ export const TuiThreadCommand = cmd({
         worker.terminate()
       }
 
-      const prompt = await input(args.prompt)
       const config = await Instance.provide({
         directory: cwd,
         fn: () => TuiConfig.get(),

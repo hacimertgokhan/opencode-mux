@@ -47,6 +47,7 @@ export function DialogModel(props: { providerID?: string }) {
             value: { providerID: provider.id, modelID: model.id },
             title: model.name ?? item.modelID,
             description: provider.name,
+            search: `${provider.id} ${provider.name} ${model.id}`,
             category,
             disabled: provider.id === "opencode" && model.id.includes("-nano"),
             footer: model.cost?.input === 0 && provider.id === "opencode" ? "Free" : undefined,
@@ -84,6 +85,7 @@ export function DialogModel(props: { providerID?: string }) {
             description: favorites.some((item) => item.providerID === provider.id && item.modelID === model)
               ? "(Favorite)"
               : undefined,
+            search: `${provider.id} ${provider.name} ${model} ${info.name ?? ""}`,
             category: connected() ? provider.name : undefined,
             disabled: provider.id === "opencode" && model.includes("-nano"),
             footer: info.cost?.input === 0 && provider.id === "opencode" ? "Free" : undefined,
@@ -112,6 +114,7 @@ export function DialogModel(props: { providerID?: string }) {
           providers(),
           map((option) => ({
             ...option,
+            search: option.title,
             category: "Popular providers",
           })),
           take(6),
@@ -120,8 +123,8 @@ export function DialogModel(props: { providerID?: string }) {
 
     if (needle) {
       return [
-        ...fuzzysort.go(needle, providerOptions, { keys: ["title", "category"] }).map((x) => x.obj),
-        ...fuzzysort.go(needle, popularProviders, { keys: ["title"] }).map((x) => x.obj),
+        ...fuzzysort.go(needle, providerOptions, { keys: ["title", "category", "description", "search"] }).map((x) => x.obj),
+        ...fuzzysort.go(needle, popularProviders, { keys: ["title", "search"] }).map((x) => x.obj),
       ]
     }
 

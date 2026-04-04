@@ -242,6 +242,54 @@ List available themes.
 
 ---
 
+### layout
+
+Cycle between layout presets (`standard`, `workspace`, `focus`).
+
+```bash frame="none"
+/layout
+```
+
+Use sub-arguments when you want exact structure control:
+
+```bash frame="none"
+/layout workspace
+/layout focus
+/layout sidebar left
+/layout sidebar right
+/layout sidebar width narrow
+/layout home center
+/layout home bottom
+/layout session top
+/layout session bottom
+```
+
+---
+
+### personalize
+
+Toggle local personalize mode (and startup trigger on macOS). In this mode, messages like `spotify'ı aç` or `x/x/x pathindeki projeyi webstorm ile aç` run as local actions.
+
+```bash frame="none"
+/personalize
+```
+
+Save the current input as the default startup ready command:
+
+```bash frame="none"
+/personalize save
+```
+
+You can run it from CLI too:
+
+```bash
+opencode --ready --prompt "spotify'ı aç sonra /path/to/project'i webstorm ile aç"
+opencode --personalize
+opencode --ready-prompt "spotify'ı aç"
+```
+
+---
+
 ### thinking
 
 Toggle the visibility of thinking/reasoning blocks in the conversation. When enabled, you can see the model's reasoning process for models that support extended thinking.
@@ -361,6 +409,8 @@ You can customize TUI behavior through `tui.json` (or `tui.jsonc`).
 {
   "$schema": "https://opencode.ai/tui.json",
   "theme": "opencode",
+  "theme_mode": "dark",
+  "theme_mode_lock": "dark",
   "keybinds": {
     "leader": "ctrl+x"
   },
@@ -368,7 +418,15 @@ You can customize TUI behavior through `tui.json` (or `tui.jsonc`).
   "scroll_acceleration": {
     "enabled": true
   },
-  "diff_style": "auto"
+  "diff_style": "auto",
+  "sidebar_width": 42,
+  "sidebar_breakpoint": 120,
+  "sidebar_position": "left",
+  "layout_preset": "workspace",
+  "home_prompt_width": 75,
+  "home_prompt_position": "bottom",
+  "session_prompt_position": "top",
+  "focus_mode": "zen"
 }
 ```
 
@@ -377,10 +435,20 @@ This is separate from `opencode.json`, which configures server/runtime behavior.
 ### Options
 
 - `theme` - Sets your UI theme. [Learn more](/docs/themes).
+- `theme_mode` - Sets the preferred light/dark theme mode.
+- `theme_mode_lock` - Locks theme mode and ignores terminal mode changes.
 - `keybinds` - Customizes keyboard shortcuts. [Learn more](/docs/keybinds).
 - `scroll_acceleration.enabled` - Enable macOS-style scroll acceleration for smooth, natural scrolling. When enabled, scroll speed increases with rapid scrolling gestures and stays precise for slower movements. **This setting takes precedence over `scroll_speed` and overrides it when enabled.**
 - `scroll_speed` - Controls how fast the TUI scrolls when using scroll commands (minimum: `0.001`, supports decimal values). Defaults to `3`. **Note: This is ignored if `scroll_acceleration.enabled` is set to `true`.**
 - `diff_style` - Controls diff rendering. `"auto"` adapts to terminal width, `"stacked"` always shows a single-column layout.
+- `sidebar_width` - Sets the sidebar width in session view.
+- `sidebar_breakpoint` - Sets the viewport width where the sidebar switches between docked and overlay modes.
+- `sidebar_position` - Sets sidebar side in session view. Use `"right"` or `"left"`.
+- `layout_preset` - Applies a layout preset: `"standard"`, `"workspace"`, or `"focus"`.
+- `home_prompt_width` - Sets the maximum width of the home prompt area.
+- `home_prompt_position` - Sets home input position. Use `"center"` or `"bottom"`.
+- `session_prompt_position` - Sets session input position. Use `"bottom"` (default) or `"top"`.
+- `focus_mode` - Sets session focus behavior. `"default"` keeps existing layout, `"zen"` starts with a distraction-free view (sidebar hidden until toggled).
 
 Use `OPENCODE_TUI_CONFIG` to load a custom TUI config path.
 
@@ -389,6 +457,12 @@ Use `OPENCODE_TUI_CONFIG` to load a custom TUI config path.
 ## Customization
 
 You can customize various aspects of the TUI view using the command palette (`ctrl+x h` or `/help`). These settings persist across restarts.
+
+Session input position can also be changed from the command palette:
+
+- Search for `input position`
+- Or run slash command `/input-position`
+- Layout presets can be switched from command palette with `layout` or slash command `/layout`
 
 ---
 

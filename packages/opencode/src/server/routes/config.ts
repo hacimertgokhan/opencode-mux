@@ -33,6 +33,27 @@ export const ConfigRoutes = lazy(() =>
         return c.json(await Config.get())
       },
     )
+    .get(
+      "/global",
+      describeRoute({
+        summary: "Get global configuration",
+        description: "Retrieve global OpenCode configuration settings and preferences.",
+        operationId: "config.getGlobal",
+        responses: {
+          200: {
+            description: "Get global config info",
+            content: {
+              "application/json": {
+                schema: resolver(Config.Info),
+              },
+            },
+          },
+        },
+      }),
+      async (c) => {
+        return c.json(await Config.getGlobal())
+      },
+    )
     .patch(
       "/",
       describeRoute({
@@ -56,6 +77,31 @@ export const ConfigRoutes = lazy(() =>
         const config = c.req.valid("json")
         await Config.update(config)
         return c.json(config)
+      },
+    )
+    .patch(
+      "/global",
+      describeRoute({
+        summary: "Update global configuration",
+        description: "Update global OpenCode configuration settings and preferences.",
+        operationId: "config.updateGlobal",
+        responses: {
+          200: {
+            description: "Successfully updated global config",
+            content: {
+              "application/json": {
+                schema: resolver(Config.Info),
+              },
+            },
+          },
+          ...errors(400),
+        },
+      }),
+      validator("json", Config.Info),
+      async (c) => {
+        const config = c.req.valid("json")
+        const next = await Config.updateGlobal(config)
+        return c.json(next)
       },
     )
     .get(

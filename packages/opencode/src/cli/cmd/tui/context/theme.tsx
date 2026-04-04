@@ -313,8 +313,8 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
 
     setStore(
       produce((draft) => {
-        const lock = pick(kv.get("theme_mode_lock"))
-        const mode = pick(kv.get("theme_mode", props.mode))
+        const lock = pick(config.theme_mode_lock) ?? pick(kv.get("theme_mode_lock"))
+        const mode = pick(config.theme_mode) ?? pick(kv.get("theme_mode", props.mode))
         draft.mode = lock ?? mode ?? props.mode
         draft.lock = lock
         const active = config.theme ?? kv.get("theme", "opencode")

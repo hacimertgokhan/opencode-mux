@@ -63,6 +63,9 @@ import { createTuiApi, TuiPluginRuntime, type RouteMap } from "./plugin"
 import { FormatError, FormatUnknownError } from "@/cli/error"
 import { LayoutMap, LayoutPreset as Layouts, layout, type LayoutPreset } from "@/config/tui-layout"
 import { Ready } from "@/ready"
+import { Global } from "@/global"
+import path from "path"
+import { mkdir } from "fs/promises"
 
 async function getTerminalBackgroundColor(): Promise<"dark" | "light"> {
   // can't set raw mode if not a TTY
@@ -376,6 +379,232 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
     apply(next)
   }
 
+  const mcpList = createMemo(() => Object.values(sync.data.mcp))
+  const mcpStats = createMemo(() => ({
+    total: mcpList().length,
+    connected: mcpList().filter((x) => x.status === "connected").length,
+    failed: mcpList().filter((x) => x.status === "failed").length,
+    disabled: mcpList().filter((x) => x.status === "disabled").length,
+    auth: mcpList().filter((x) => x.status === "needs_auth" || x.status === "needs_client_registration").length,
+  }))
+
+  const skillStats = async () => {
+    const list = (await sdk.client.app.skills()).data ?? []
+    const active = sync.data.command.filter((x) => x.source === "skill").length
+    return {
+      total: list.length,
+      active,
+    }
+  }
+
+  const openDir = async (dir: string) => {
+    await mkdir(dir, { recursive: true }).catch(() => {})
+    await open(dir, { wait: false }).catch(() => {})
+  }
+
+  const showSkillStatus = async () => {
+    const stat = await skillStats()
+    await DialogAlert.show(
+      dialog,
+      "Skills / Status",
+      [
+        `Total skills: ${stat.total}`,
+        `Active skill commands: ${stat.active}`,
+        `Inactive: ${Math.max(0, stat.total - stat.active)}`,
+      ].join("\n"),
+    )
+  }
+
+  const showMcpStatus = async () => {
+    const stat = mcpStats()
+    await DialogAlert.show(
+      dialog,
+      "MCP / Status",
+      [
+        `Total MCP: ${stat.total}`,
+        `Connected: ${stat.connected}`,
+        `Failed: ${stat.failed}`,
+        `Needs auth/setup: ${stat.auth}`,
+        `Disabled: ${stat.disabled}`,
+      ].join("\n"),
+    )
+  }
+
+  const slashSeg = () => {
+    const line = promptRef.current?.current.input.split("\n")[0]?.trim() ?? ""
+    if (!line.startsWith("/")) return []
+    return line
+      .slice(1)
+      .split(/\s+/)
+      .map((x) => x.trim().toLowerCase())
+      .filter(Boolean)
+  }
+
+  const slashArg = (name: string, aliases: string[] = []) => {
+    const seg = slashSeg()
+    if (!seg.length) return [] as string[]
+    const all = [name, ...aliases].map((x) => x.toLowerCase())
+    const hit = all.find((x) => seg[0].startsWith(`${x}-`))
+    if (hit) return [seg[0].slice(hit.length + 1), ...seg.slice(1)]
+    return seg.slice(1)
+  }
+
+  const runLayout = (dlg: ReturnType<typeof useDialog>) => {
+    const seg = slashArg("layout")
+    if (!seg.length || seg[0] === "cycle" || seg[0] === "next") {
+      cycle()
+      dlg.clear()
+      return
+    }
+    const key = seg
+      .filter((x) => x !== "set" && x !== "preset")
+      .join("-")
+      .replace(/^layout-/, "")
+    const map = {
+      standard: () => apply("standard"),
+      workspace: () => apply("workspace"),
+      focus: () => apply("focus"),
+      modern: () => apply("modern"),
+      soft: () => apply("soft"),
+      minimalist: () => apply("minimalist"),
+      "sidebar-left": () => kv.set("sidebar_position", "left"),
+      "sidebar-right": () => kv.set("sidebar_position", "right"),
+      "sidebar-auto": () => kv.set("sidebar", "auto"),
+      "sidebar-hide": () => kv.set("sidebar", "hide"),
+      "sidebar-width-narrow": () => kv.set("sidebar_width", 32),
+      "sidebar-width-wide": () => kv.set("sidebar_width", 52),
+      "session-top": () => kv.set("session_prompt_position", "top"),
+      "session-bottom": () => kv.set("session_prompt_position", "bottom"),
+      "session-input-top": () => kv.set("session_prompt_position", "top"),
+      "session-input-bottom": () => kv.set("session_prompt_position", "bottom"),
+      "home-center": () => kv.set("home_prompt_position", "center"),
+      "home-bottom": () => kv.set("home_prompt_position", "bottom"),
+      "home-input-center": () => kv.set("home_prompt_position", "center"),
+      "home-input-bottom": () => kv.set("home_prompt_position", "bottom"),
+      "home-width-narrow": () => kv.set("home_prompt_width", 62),
+      "home-width-wide": () => kv.set("home_prompt_width", 104),
+    } as const
+    const fn = map[key as keyof typeof map]
+    if (!fn) {
+      toast.show({
+        variant: "warning",
+        message: "Unknown layout subarg. Example: /layout workspace or /layout sidebar left",
+      })
+      return
+    }
+    fn()
+    dlg.clear()
+  }
+
+  const runSkills = (dlg: ReturnType<typeof useDialog>) => {
+    const key = slashSeg()[0] === "install-skills" ? "install" : slashArg("skills", ["skill"]).join("-")
+    if (!key || key === "install" || key === "create" || key === "add") {
+      dlg.replace(() => <DialogSkillInstaller />)
+      return
+    }
+    if (key === "status" || key === "stats") {
+      void showSkillStatus()
+      return
+    }
+    if (key === "folder" || key === "dir" || key === "open") {
+      void openDir(path.join(Global.Path.cache, "skills")).then(() => dlg.clear())
+      return
+    }
+    toast.show({
+      variant: "warning",
+      message: "Unknown skills subarg. Use: /skills install|status|folder",
+    })
+  }
+
+  const runMcps = (dlg: ReturnType<typeof useDialog>) => {
+    const key = slashSeg()[0] === "install-mcp" ? "install" : slashArg("mcps", ["mcp"]).join("-")
+    if (!key || key === "list" || key === "toggle") {
+      dlg.replace(() => <DialogMcp />)
+      return
+    }
+    if (key === "install" || key === "create" || key === "add") {
+      dlg.replace(() => <DialogMcpInstaller />)
+      return
+    }
+    if (key === "status" || key === "stats") {
+      void showMcpStatus()
+      return
+    }
+    if (key === "folder" || key === "dir" || key === "open") {
+      void openDir(sync.data.path.config || Global.Path.config).then(() => dlg.clear())
+      return
+    }
+    toast.show({
+      variant: "warning",
+      message: "Unknown mcps subarg. Use: /mcps install|status|folder",
+    })
+  }
+
+  const runMux = (dlg: ReturnType<typeof useDialog>) => {
+    const key = slashArg("mux", ["mu"]).join("-")
+    if (!key || key === "menu" || key === "layout" || key === "status" || key === "switch" || key === "about") {
+      dlg.replace(() => <DialogRouterManager />)
+      return
+    }
+    if (key === "keys" || key === "key") {
+      dlg.replace(() => <DialogRouterManagerKeys />)
+      return
+    }
+    if (key === "models" || key === "model") {
+      dlg.replace(() => <DialogMuxModels />)
+      return
+    }
+    toast.show({
+      variant: "warning",
+      message: "Unknown mux subarg. Use: /mux status|keys|models|switch",
+    })
+  }
+
+  const runPersonalize = async (dlg: ReturnType<typeof useDialog>) => {
+    const key = slashArg("personalize").join("-")
+    if (!key) {
+      const out = await Ready.personalize(!persona()).catch((err) => ({
+        ok: false,
+        message: err instanceof Error ? err.message : String(err),
+        state: {
+          enabled: persona(),
+          startup: persona(),
+          prompt: "",
+        },
+      }))
+      setPersona(() => out.state.enabled)
+      kv.set("personalize_enabled", out.state.enabled)
+      toast.show({
+        variant: out.ok ? "info" : "warning",
+        message: out.message,
+      })
+      dlg.clear()
+      return
+    }
+    if (key === "save") {
+      const text = promptRef.current?.current.input.trim()
+      if (!text) {
+        toast.show({
+          variant: "warning",
+          message: "Write a command first, then run /personalize save",
+        })
+        dlg.clear()
+        return
+      }
+      await Ready.prompt(text)
+      toast.show({
+        variant: "info",
+        message: "Saved as default personalize startup command",
+      })
+      dlg.clear()
+      return
+    }
+    toast.show({
+      variant: "warning",
+      message: "Unknown personalize subarg. Use: /personalize or /personalize save",
+    })
+  }
+
   // Update terminal window title based on current route and session
   createEffect(() => {
     if (!terminalTitleEnabled() || Flag.OPENCODE_DISABLE_TERMINAL_TITLE) return
@@ -611,31 +840,62 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       category: "Agent",
       slash: {
         name: "mcps",
+        aliases: ["mcp", "install-mcp", "mcp-status", "mcps-status", "mcp-folder", "mcps-folder"],
       },
-      onSelect: () => {
-        dialog.replace(() => <DialogMcp />)
+      onSelect: (dialog) => {
+        runMcps(dialog)
       },
     },
     {
       title: "Install MCP Servers",
       value: "mcp.install",
       category: "Agent",
-      slash: {
-        name: "install-mcp",
-      },
       onSelect: () => {
         dialog.replace(() => <DialogMcpInstaller />)
       },
     },
     {
-      title: "Install Skills",
+      title: "Skills",
       value: "skill.install",
       category: "Agent",
       slash: {
-        name: "install-skills",
+        name: "skills",
+        aliases: ["skill", "install-skills", "skills-status", "skill-status", "skills-folder", "skill-folder"],
       },
+      onSelect: (dialog) => {
+        runSkills(dialog)
+      },
+    },
+    {
+      title: "Skills Status",
+      value: "skill.status",
+      category: "Agent",
       onSelect: () => {
-        dialog.replace(() => <DialogSkillInstaller />)
+        void showSkillStatus()
+      },
+    },
+    {
+      title: "Open Skills Folder",
+      value: "skill.folder",
+      category: "Agent",
+      onSelect: () => {
+        void openDir(path.join(Global.Path.cache, "skills")).then(() => dialog.clear())
+      },
+    },
+    {
+      title: "MCP Status",
+      value: "mcp.status.summary",
+      category: "Agent",
+      onSelect: () => {
+        void showMcpStatus()
+      },
+    },
+    {
+      title: "Open MCP Folder",
+      value: "mcp.folder",
+      category: "Agent",
+      onSelect: () => {
+        void openDir(sync.data.path.config || Global.Path.config).then(() => dialog.clear())
       },
     },
     {
@@ -684,18 +944,16 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       value: "router.mux",
       slash: {
         name: "mux",
+        aliases: ["mu", "mux-status", "mu-status", "mux-keys", "mu-keys", "mux-models", "mu-models", "mux-switch", "mu-switch"],
       },
-      onSelect: () => {
-        dialog.replace(() => <DialogRouterManager />)
+      onSelect: (dialog) => {
+        runMux(dialog)
       },
       category: "Provider",
     },
     {
       title: "Mux Status",
       value: "router.mux.status",
-      slash: {
-        name: "mux-status",
-      },
       onSelect: () => {
         dialog.replace(() => <DialogRouterManager />)
       },
@@ -704,9 +962,6 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
     {
       title: "Mux Keys",
       value: "router.mux.keys",
-      slash: {
-        name: "mux-keys",
-      },
       onSelect: () => {
         dialog.replace(() => <DialogRouterManagerKeys />)
       },
@@ -715,9 +970,6 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
     {
       title: "Mux Models",
       value: "router.mux.models",
-      slash: {
-        name: "mux-models",
-      },
       onSelect: () => {
         dialog.replace(() => <DialogMuxModels />)
       },
@@ -726,9 +978,6 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
     {
       title: "Mux Switch",
       value: "router.mux.switch",
-      slash: {
-        name: "mux-switch",
-      },
       onSelect: () => {
         dialog.replace(() => <DialogRouterManager />)
       },
@@ -737,9 +986,6 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
     {
       title: "Mux About",
       value: "router.mux.about",
-      slash: {
-        name: "mux-about",
-      },
       onSelect: () => {
         dialog.replace(() => <DialogRouterManager />)
       },
@@ -787,19 +1033,35 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       category: "Layout",
       slash: {
         name: "layout",
+        aliases: [
+          "layout-standard",
+          "layout-workspace",
+          "layout-focus",
+          "layout-modern",
+          "layout-soft",
+          "layout-minimalist",
+          "sidebar-left",
+          "sidebar-right",
+          "sidebar-auto",
+          "sidebar-hide",
+          "sidebar-width-narrow",
+          "sidebar-width-wide",
+          "session-input-top",
+          "session-input-bottom",
+          "home-input-center",
+          "home-input-bottom",
+          "home-width-narrow",
+          "home-width-wide",
+        ],
       },
       onSelect: (dialog) => {
-        cycle()
-        dialog.clear()
+        runLayout(dialog)
       },
     },
     {
       title: "Layout Standard",
       value: "layout.standard",
       category: "Layout",
-      slash: {
-        name: "layout-standard",
-      },
       onSelect: (dialog) => {
         apply("standard")
         dialog.clear()
@@ -809,9 +1071,6 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       title: "Layout Workspace",
       value: "layout.workspace",
       category: "Layout",
-      slash: {
-        name: "layout-workspace",
-      },
       onSelect: (dialog) => {
         apply("workspace")
         dialog.clear()
@@ -821,9 +1080,6 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       title: "Layout Focus",
       value: "layout.focus",
       category: "Layout",
-      slash: {
-        name: "layout-focus",
-      },
       onSelect: (dialog) => {
         apply("focus")
         dialog.clear()
@@ -833,9 +1089,6 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       title: "Layout Modern",
       value: "layout.modern",
       category: "Layout",
-      slash: {
-        name: "layout-modern",
-      },
       onSelect: (dialog) => {
         apply("modern")
         dialog.clear()
@@ -845,9 +1098,6 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       title: "Layout Soft",
       value: "layout.soft",
       category: "Layout",
-      slash: {
-        name: "layout-soft",
-      },
       onSelect: (dialog) => {
         apply("soft")
         dialog.clear()
@@ -857,9 +1107,6 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       title: "Layout Minimalist",
       value: "layout.minimalist",
       category: "Layout",
-      slash: {
-        name: "layout-minimalist",
-      },
       onSelect: (dialog) => {
         apply("minimalist")
         dialog.clear()
@@ -869,9 +1116,6 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       title: "Sidebar Left",
       value: "layout.sidebar.left",
       category: "Layout",
-      slash: {
-        name: "sidebar-left",
-      },
       onSelect: (dialog) => {
         kv.set("sidebar_position", "left")
         dialog.clear()
@@ -881,9 +1125,6 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       title: "Sidebar Right",
       value: "layout.sidebar.right",
       category: "Layout",
-      slash: {
-        name: "sidebar-right",
-      },
       onSelect: (dialog) => {
         kv.set("sidebar_position", "right")
         dialog.clear()
@@ -893,9 +1134,6 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       title: "Sidebar Auto",
       value: "layout.sidebar.auto",
       category: "Layout",
-      slash: {
-        name: "sidebar-auto",
-      },
       onSelect: (dialog) => {
         kv.set("sidebar", "auto")
         dialog.clear()
@@ -905,9 +1143,6 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       title: "Sidebar Hidden",
       value: "layout.sidebar.hide",
       category: "Layout",
-      slash: {
-        name: "sidebar-hide",
-      },
       onSelect: (dialog) => {
         kv.set("sidebar", "hide")
         dialog.clear()
@@ -917,9 +1152,6 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       title: "Sidebar Width Narrow",
       value: "layout.sidebar.width.narrow",
       category: "Layout",
-      slash: {
-        name: "sidebar-width-narrow",
-      },
       onSelect: (dialog) => {
         kv.set("sidebar_width", 32)
         dialog.clear()
@@ -929,9 +1161,6 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       title: "Sidebar Width Wide",
       value: "layout.sidebar.width.wide",
       category: "Layout",
-      slash: {
-        name: "sidebar-width-wide",
-      },
       onSelect: (dialog) => {
         kv.set("sidebar_width", 52)
         dialog.clear()
@@ -941,9 +1170,6 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       title: "Session Input Top",
       value: "layout.session.top",
       category: "Layout",
-      slash: {
-        name: "session-input-top",
-      },
       onSelect: (dialog) => {
         kv.set("session_prompt_position", "top")
         dialog.clear()
@@ -953,9 +1179,6 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       title: "Session Input Bottom",
       value: "layout.session.bottom",
       category: "Layout",
-      slash: {
-        name: "session-input-bottom",
-      },
       onSelect: (dialog) => {
         kv.set("session_prompt_position", "bottom")
         dialog.clear()
@@ -965,9 +1188,6 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       title: "Home Input Center",
       value: "layout.home.center",
       category: "Layout",
-      slash: {
-        name: "home-input-center",
-      },
       onSelect: (dialog) => {
         kv.set("home_prompt_position", "center")
         dialog.clear()
@@ -977,9 +1197,6 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       title: "Home Input Bottom",
       value: "layout.home.bottom",
       category: "Layout",
-      slash: {
-        name: "home-input-bottom",
-      },
       onSelect: (dialog) => {
         kv.set("home_prompt_position", "bottom")
         dialog.clear()
@@ -989,9 +1206,6 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       title: "Home Width Narrow",
       value: "layout.home.width.narrow",
       category: "Layout",
-      slash: {
-        name: "home-width-narrow",
-      },
       onSelect: (dialog) => {
         kv.set("home_prompt_width", 62)
         dialog.clear()
@@ -1001,9 +1215,6 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       title: "Home Width Wide",
       value: "layout.home.width.wide",
       category: "Layout",
-      slash: {
-        name: "home-width-wide",
-      },
       onSelect: (dialog) => {
         kv.set("home_prompt_width", 104)
         dialog.clear()
@@ -1015,39 +1226,22 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       category: "System",
       slash: {
         name: "personalize",
+        aliases: ["personalize-save"],
       },
       onSelect: async (dialog) => {
-        const out = await Ready.personalize(!persona()).catch((err) => ({
-          ok: false,
-          message: err instanceof Error ? err.message : String(err),
-          state: {
-            enabled: persona(),
-            startup: persona(),
-            prompt: "",
-          },
-        }))
-        setPersona(() => out.state.enabled)
-        kv.set("personalize_enabled", out.state.enabled)
-        toast.show({
-          variant: out.ok ? "info" : "warning",
-          message: out.message,
-        })
-        dialog.clear()
+        await runPersonalize(dialog)
       },
     },
     {
       title: "Personalize Save Input",
       value: "personalize.save",
       category: "System",
-      slash: {
-        name: "personalize-save",
-      },
       onSelect: async (dialog) => {
         const text = promptRef.current?.current.input.trim()
         if (!text) {
           toast.show({
             variant: "warning",
-            message: "Write a command first, then run /personalize-save",
+            message: "Write a command first, then run /personalize save",
           })
           dialog.clear()
           return
