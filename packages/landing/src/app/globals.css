@@ -85,7 +85,8 @@ footer {
   font-weight: 600;
   letter-spacing: -0.07em;
   text-transform: lowercase;
-  animation: rise 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+  opacity: 0;
+  animation: rise 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
 .top {
@@ -800,19 +801,6 @@ footer {
   .feat-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-
-  .step-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .split {
-    grid-template-columns: 1fr;
-  }
-
-  .install-grid {
-    grid-template-columns: 1fr;
-  }
-}
 
   .step-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
