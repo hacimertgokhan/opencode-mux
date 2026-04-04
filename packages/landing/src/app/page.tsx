@@ -43,7 +43,7 @@ function RoutingViz() {
   const [activeKey, setActiveKey] = useState(0)
   const [activeModel, setActiveModel] = useState(0)
   const [reqCount, setReqCount] = useState(847)
-  const keys = ["sk-or-a1b2... ($12.45)", "sk-or-c3d4... ($8.20)", "sk-or-e5f6... ($3.10)"]
+  const keys = ["sk-or-a1b2...", "sk-or-c3d4...", "sk-or-e5f6..."]
   const models = ["claude-3.5-sonnet", "gpt-4o", "gemini-2.0-flash"]
 
   useEffect(() => {
@@ -98,133 +98,12 @@ function RoutingViz() {
       </div>
       <div className="routing-status">
         <span className="routing-status-label">Routing via</span>
-        <span className="routing-status-value">{keys[activeKey].split(" ")[0]}</span>
+        <span className="routing-status-value">{keys[activeKey]}</span>
         <span className="routing-status-arrow">→</span>
         <span className="routing-status-model">{models[activeModel]}</span>
       </div>
     </div>
   )
-}
-
-function CostCalc() {
-  const [sessions, setSessions] = useState(50)
-  const [tokens, setTokens] = useState(100)
-
-  const withoutMux = sessions * tokens * 0.0001
-  const withMux = withoutMux * 0.62
-  const saved = withoutMux - withMux
-
-  return (
-    <div className="cost-calc">
-      <div className="cost-calc-title">Calculate your savings</div>
-      <div className="cost-calc-grid">
-        <div className="cost-calc-inputs">
-          <div className="cost-calc-field">
-            <label>Sessions / day</label>
-            <input
-              type="range"
-              min="10"
-              max="200"
-              value={sessions}
-              onChange={(e) => setSessions(Number(e.target.value))}
-            />
-            <div className="cost-calc-value">{sessions}</div>
-          </div>
-          <div className="cost-calc-field">
-            <label>K tokens / session</label>
-            <input type="range" min="10" max="500" value={tokens} onChange={(e) => setTokens(Number(e.target.value))} />
-            <div className="cost-calc-value">{tokens}K</div>
-          </div>
-        </div>
-        <div className="cost-calc-results">
-          <div className="cost-calc-result">
-            <span>Without Mux</span>
-            <span className="cost-calc-amount">${withoutMux.toFixed(2)}/day</span>
-          </div>
-          <div className="cost-calc-result highlight">
-            <span>With Mux</span>
-            <span className="cost-calc-amount">${withMux.toFixed(2)}/day</span>
-          </div>
-          <div className="cost-calc-saved">
-            You save <span>${saved.toFixed(2)}</span>/day · <span>${(saved * 30).toFixed(2)}</span>/month
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function Particles() {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-
-  useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-    const ctx = canvas.getContext("2d")
-    if (!ctx) return
-
-    let running = true
-    const particles: { x: number; y: number; vx: number; vy: number; s: number; o: number }[] = []
-
-    const resize = () => {
-      canvas.width = window.innerWidth
-      canvas.height = window.innerHeight
-    }
-    resize()
-    window.addEventListener("resize", resize)
-
-    for (let i = 0; i < 60; i++) {
-      particles.push({
-        x: Math.random() * canvas.width,
-        y: Math.random() * canvas.height,
-        vx: (Math.random() - 0.5) * 0.3,
-        vy: (Math.random() - 0.5) * 0.3,
-        s: Math.random() * 2 + 0.5,
-        o: Math.random() * 0.3 + 0.05,
-      })
-    }
-
-    const draw = () => {
-      if (!running) return
-      ctx.clearRect(0, 0, canvas.width, canvas.height)
-      for (const p of particles) {
-        p.x += p.vx
-        p.y += p.vy
-        if (p.x < 0) p.x = canvas.width
-        if (p.x > canvas.width) p.x = 0
-        if (p.y < 0) p.y = canvas.height
-        if (p.y > canvas.height) p.y = 0
-        ctx.beginPath()
-        ctx.arc(p.x, p.y, p.s, 0, Math.PI * 2)
-        ctx.fillStyle = `rgba(255,255,255,${p.o})`
-        ctx.fill()
-      }
-      for (let i = 0; i < particles.length; i++) {
-        for (let j = i + 1; j < particles.length; j++) {
-          const dx = particles[i].x - particles[j].x
-          const dy = particles[i].y - particles[j].y
-          const dist = Math.sqrt(dx * dx + dy * dy)
-          if (dist < 120) {
-            ctx.beginPath()
-            ctx.moveTo(particles[i].x, particles[i].y)
-            ctx.lineTo(particles[j].x, particles[j].y)
-            ctx.strokeStyle = `rgba(255,255,255,${0.03 * (1 - dist / 120)})`
-            ctx.lineWidth = 0.5
-            ctx.stroke()
-          }
-        }
-      }
-      requestAnimationFrame(draw)
-    }
-    draw()
-
-    return () => {
-      running = false
-      window.removeEventListener("resize", resize)
-    }
-  }, [])
-
-  return <canvas ref={canvasRef} className="particles-canvas" />
 }
 
 function Reveal({ children, delay = 0 }: { children: React.ReactNode; delay?: number }) {
@@ -283,7 +162,7 @@ export default function Home() {
       { t: "$", c: "refactor the auth module to use JWT" },
       { t: "dim", c: "reading src/auth/index.ts..." },
       { t: "dim", c: "generating changes..." },
-      { t: "ok", c: "3 files modified · 1.4s · $0.02" },
+      { t: "ok", c: "3 files modified · 1.4s" },
     ]
 
     let d = 0
@@ -316,7 +195,6 @@ export default function Home() {
 
   return (
     <>
-      <Particles />
       <div className="noise" />
 
       <div
@@ -458,9 +336,9 @@ export default function Home() {
           <Reveal delay={100}>
             <div className="metric-card">
               <div className="metric-value">
-                $<Counter target={14820} />
+                <Counter target={1247} />
               </div>
-              <div className="metric-label">Saved by users</div>
+              <div className="metric-label">Active users</div>
             </div>
           </Reveal>
           <Reveal delay={200}>
@@ -482,7 +360,7 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="section" id="platforms">
+      <section className="section-full" id="platforms">
         <Reveal>
           <div className="section-head">
             <div className="section-label">Platforms</div>
@@ -529,10 +407,10 @@ export default function Home() {
                     ┌─ keys ─────────────────────────┐
                   </text>
                   <text x="18" y="126" fill="#555" fontSize="9" fontFamily="JetBrains Mono,monospace">
-                    │ ● sk-or-v1-abc1 $12.45 │
+                    │ ● sk-or-v1-abc1 active
                   </text>
                   <text x="18" y="140" fill="#555" fontSize="9" fontFamily="JetBrains Mono,monospace">
-                    │ ○ sk-or-v1-def4 $8.20 │
+                    │ ○ sk-or-v1-def4 standby
                   </text>
                   <text x="18" y="154" fill="#555" fontSize="9" fontFamily="JetBrains Mono,monospace">
                     └────────────────────────────────┘
@@ -576,7 +454,7 @@ export default function Home() {
                     Build a REST API with Express
                   </text>
                   <text x="132" y="70" fill="#444" fontSize="7">
-                    claude-3.5-sonnet · $0.01
+                    claude-3.5-sonnet
                   </text>
                   <rect x="116" y="90" width="368" height="74" rx="6" fill="#050505" stroke="rgba(255,255,255,0.06)" />
                   <text x="132" y="112" fill="#fff" fontSize="9">
@@ -637,7 +515,7 @@ export default function Home() {
                     ● active
                   </text>
                   <text x="346" y="108" fill="#555" fontSize="7">
-                    2 keys · $20.65
+                    2 keys loaded
                   </text>
                   <text x="346" y="124" fill="#555" fontSize="7">
                     3 models
@@ -720,7 +598,7 @@ export default function Home() {
                     model: claude-3.5
                   </text>
                   <text x="350" y="120" fill="#555" fontSize="7">
-                    credits: $12.45
+                    status: healthy
                   </text>
                   <text x="350" y="144" fill="#333" fontSize="7">
                     Tab to toggle
@@ -732,7 +610,7 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="section" id="routing">
+      <section className="section-full" id="routing">
         <Reveal>
           <div className="section-head">
             <div className="section-label">Live Routing</div>
@@ -842,13 +720,7 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="section">
-        <Reveal>
-          <CostCalc />
-        </Reveal>
-      </section>
-
-      <section className="section" id="features">
+      <section className="section-full" id="features">
         <Reveal>
           <div className="section-head">
             <div className="section-label">Features</div>
@@ -875,7 +747,7 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="section" id="how">
+      <section className="section-full" id="how">
         <Reveal>
           <div className="section-head">
             <div className="section-label">How it works</div>
