@@ -32,3 +32,7 @@ logs/
 *.bun-build
 tsconfig.tsbuildinfo
 packages/opencode/bin/opencode
+packages/landing/.next/
+packages/landing/out/
+packages/landing/.next/
+packages/landing/out/
